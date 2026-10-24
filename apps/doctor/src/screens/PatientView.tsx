@@ -6,6 +6,7 @@ import type { Id } from '../../../../convex/_generated/dataModel'
 import { Badge, Button, Screen, Text } from '../components'
 import { formatDateTime } from '../format'
 import Timeline from './patient/Timeline'
+import VisitPanel from './patient/VisitPanel'
 import { Alerts, AskRecord, Brief, HistoryCards, Questions, Quotes, Search } from './patient/sections'
 
 export default function PatientView({ patientId, onBack }: { patientId: Id<'patients'>; onBack: () => void }) {
@@ -35,6 +36,7 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
       )}
       <Alerts patientId={patientId} />
       {appointment && <Brief patientId={patientId} appointmentId={appointment._id} />}
+      {appointment && <VisitPanel appointmentId={appointment._id} />}
       <Timeline patientId={patientId} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16 }}>
         <Quotes entries={entries ?? []} date={selectedDate} />
