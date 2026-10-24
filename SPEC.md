@@ -8,7 +8,7 @@ We are building a bilingual (English and Spanish) voice companion. It checks in 
 
 - **Who it serves:** Spanish-speaking older adults with metabolic disease (the demo patient has type 2 diabetes) waiting weeks for an endocrinology appointment. Name this community in the pitch; the Anthropic track rewards a specific community. The narrow focus keeps the vocabulary manageable: glucose readings, metformin and other diabetes medicines, thirst, urination, fatigue, low-sugar spells, foot tingling.
 - **Demo storyline (seeded):** María has had high sugar (thirst, nighttime urination, fatigue, readings of 240-250) for three weeks on metformin. Her clinic added glipizide, and since then she has shaky, sweaty, dizzy spells before meals with readings of 58-70. The doctor sees that pattern on the timeline before the visit.
-- **Two interfaces:** a patient mobile app (Expo) plus daily phone calls, and a doctor web dashboard.
+- **Two interfaces:** a patient mobile app (Expo) plus daily phone calls, and a doctor web dashboard. The final screens come from the designer's Figma docs; see Figma scope (v2).
 - **The cycle:** before the visit (check-ins, questions) → the visit (recording, summary) → after the visit (explanation, follow-ups) → the next visit. Check-ins and the question queue keep running after every visit.
 
 **How to use this doc with Claude Code**
@@ -111,6 +111,88 @@ The features are grouped by stage of the care cycle. The P0 rows are the demo; e
 | F2 | After the visit, the agent answers only from retrieved passages, and the app shows which passage was used | P1 |
 | F3 | Disclaimers: not medical advice, not for emergencies (call 911) | P0 |
 | F4 | The patient consents to automated calls during onboarding (the TCPA requires consent) | P0 |
+
+## Figma scope (v2)
+
+The designer's two docs, `App Medical Initial.md` (patient app) and `Website Medical Initial.md` (doctor web), define the final screens. This section compares them with what is built, lists the new features (IDs **G** for the patient app, **H** for the doctor web), and says which backend piece each one needs. Existing IDs (A–F) keep their meaning. Schema changes are in Data model → Schema v2; new functions are in Team workflow → the contract; the work order is in Build plan v2.
+
+### What is built (Oct 24)
+
+| Area | Status |
+| --- | --- |
+| Check-in spine (B1–B3, B6 voice capture, B7) | Done: cron, "Call me now", Get Call polling, Claude extraction, Elastic indexing before `processed`, red-flag and add-question webhooks |
+| Visit processing (D1–D4, D6) and explainer search (E2) | Done: upload, two-pass Ink transcription, Claude cleanup and speaker labels, summaries in both languages, question coverage, `indexVisitChunks`, `/cartesia/search-visit`, release |
+| Elastic (C2, C6, C7, C9) | Done: timeline aggregation, hybrid search with rerank, ask-the-record agent, Workflow brief |
+| App queries and mutations (A1–A3, B5, B6, C1, C3–C5, C8, E1, E4 carry-over) | Done, with unstyled screens in both apps |
+| Not built | B4 in-app voice (`getAccessToken`, `mintAccessToken`, `useVoiceSession` are stubs), D5 unaddressed concerns, E3 teach-back (prompt only, untested), daily brief cron line |
+
+The main gaps the designs expose: the backend has no notion of "the next call" or "a missed call", stores the check-in summary only in English, has visit summaries whose medications have no time of day, has one doctor and one patient in the seed, and has nothing for the after-visit checklist, the text chat, or source links on AI-written text.
+
+### G. Patient app
+
+| ID | Feature | Priority | Backend today | Needs |
+| --- | --- | --- | --- | --- |
+| G1 | Home tile states: timeline, call coming soon (15 min before), calling, missed call, check-in done | P0 | Conversation status only; a no-answer call is marked `processed` | A: `api.calls.callSchedule`; no-answer stored as `failed` with `endReason`; `conversations.summaryPatientLang` |
+| G2 | Cycle strip Before visit → Visit → After visit, with countdown ("12 días", "Hoy") | P0 | `appointments.current`, `visits.getByAppointment` | B: one `appointments.cycle` query that derives the stage |
+| G3 | Today's medications: name, dose, time, morning or evening icon | P0 | Summary `schedule` is free text | A: VisitSummary v2 (`times_of_day`, `key`, `change`); `api.visits.latestReleasedSummary`; seed a past released visit |
+| G4 | "Taken" button per dose, writing a `medicationEvent` | P1 | `medicationEvents.conversationId` is required | Schema v2 (`conversationId` optional, `source`, `slot`); B: `medications.markTaken` |
+| G5 | Top 2–3 instructions from the latest summary | P0 | In the summary | `latestReleasedSummary` (G3) |
+| G6 | Home before the first visit: "You have 3 questions for Dr. Lee" and an empty state | P0 | Exists | — |
+| G7 | My Visit card: doctor, date, time, clinic, countdown | P0 | No clinic | Schema v2 `appointments.clinicName` |
+| G8 | Prep checklist (B8): bottles, glucose log, ID, arrive early | P1 | — | None: static text in `i18n.ts`, ticks kept on the device |
+| G9 | Questions in Spanish and English side by side, voice tag kept | P0 | Exists | — |
+| G10 | Summary, "Your doctor is reviewing" until release, each question answered or carried over | P0 | Exists (`releasedToPatient`, question `status`) | — |
+| G11 | After-visit checklist: pick up prescription, book follow-up, get tests; patient ticks items | P1 | — | Schema v2 `visitTasks`; A writes rows when summarizing; B: `tasks.setDone` |
+| G12 | Past visits list, newest first, each opening its summary | P0 | No per-patient visit query | A: `api.visits.listForPatient` |
+| G13 | My Health: time range, plain summary card, one trend chart per symptom with visit markers and word labels, symptom cards with quotes and "what your doctor will see", medication week grid, visit history | P1 | Raw entries and events | B: `health.overview` (deterministic counts, no Claude, so it never interprets); `elastic.timeline` takes a `from` date; A: medication names normalized to one key |
+| G14 | Settings: text size, notifications toggle, consent with confirm, appointment read-only, sign out | P0 for existing fields, P1 for the rest | Profile fields exist | Schema v2 `patients.textSize`, `patients.notificationsEnabled`; sign out = demo patient picker |
+| G15 | Notification bell: summary ready, missed call, call soon, question captured | P1 | — | B: `notifications.list`, derived from existing tables, no new table. Real push is P2 (remote push needs a dev build) |
+| G16 | AI chat: floating "Pregunte" button, chat log, suggested prompts, text box, mic | P1 | — | Schema v2 `chatMessages`, channel `chat`; A: `convex/chat.ts`; mic = record a clip with `expo-audio`, A transcribes |
+| G17 | Full-screen "Call 911 now" | P1 | Agents say it on calls | Opened by a chat message with `redFlag: true` |
+| G18 | Check-in done line and check-in history in the patient's language | P0 | `summaryEnglish` only | A: extraction adds `summary_patient_lang` |
+
+### H. Doctor web
+
+| ID | Feature | Priority | Backend today | Needs |
+| --- | --- | --- | --- | --- |
+| H1 | Home welcome: "Good morning, Dr. Lee", "5 appointments this week · 1 alert" | P0 | One doctor string per appointment | Schema v2 index `by_doctor_time`; B: `dashboard.doctorHome({ doctorName })` |
+| H2 | Find patient by name | P0 | `patients.list` | None: filter on the client |
+| H3 | Alerts strip: patient, symptom, quote with English, time, "Open" | P0 | `alerts.quote` in the patient's language only | Schema v2 `alerts.quoteEnglish`; A translates it after the webhook |
+| H4 | Next appointment card: countdown, reason, language badge ("interpreter recommended"), top concerns, question count, "6 of 7 check-ins completed" | P0 | Pieces exist separately | B: `dashboard.doctorHome`; completion counts local days with a `processed` check-in that has patient turns; top concerns from the brief, else the highest recent severities |
+| H5 | Upcoming list grouped Today, Tomorrow, This week, with alert badges | P0 | — | Same query |
+| H6 | Patients table: language, alert badge, alerts pinned first, "new since last viewed" dot | P0 (dot P1) | `patients.list` | Schema v2 `patients.doctorLastViewedAt`; B: `patients.markViewed` |
+| H7 | Patient header strip: name, age, reason, countdown, language, visit button, red-flag banner | P0 | No age | Schema v2 `patients.dateOfBirth` |
+| H8 | Pre-visit summary: overview, reported concerns, topics for review, every sentence linked to the patient's words | P1 (P0 shows today's brief paragraph as the overview) | One `textEnglish` paragraph | Schema v2 `briefs.sections`; B: the agent returns JSON with `symptomEntryId` citations |
+| H9 | Timeline point opens a side panel of quotes | P0 | Exists (`patients.symptomEntries`) | — |
+| H10 | Visit button: Start visit → Processing (Uploaded → Transcribed → Summarized) → Review visit → View visit ("Released Oct 20") | P0 | Status exists, no release time | Schema v2 `visits.releasedAt` |
+| H11 | Record the visit in the browser | P1 (upload is P0) | Upload exists; `transcribeFile` accepts webm | None: `MediaRecorder` in the doctor app |
+| H12 | Attention cards: "2 of 3 questions answered" (D4), "1 symptom not discussed: thirst" (D5) | P0 | D4 exists, D5 does not | Schema v2 `visits.unaddressedSymptoms`; A computes it during processing |
+| H13 | Visit summary items link to the transcript turn they came from | P1 | — | VisitSummary v2 `source_turn` |
+| H14 | Analytics: check-in completion, adherence, questions answered across visits | P2 | — | Later |
+
+**Not in the website doc, but keep:** C6 cross-language search and C7 ask-the-record, plus the "Generate brief" button (C9). The Elastic track is judged on Agent Builder and Workflows, so the designer must place them in the patient view.
+
+### Demo data the designs assume (seed v2)
+
+- The demo patient has one **past** completed appointment with a released visit (the one where glipizide was added), its `visitTasks`, and questions answered or carried over, so Home shows medications, instructions and a countdown.
+- 14 days of check-ins (the chart shows 14), one of them missed, with `medicationEvents` marked taken and missed across the week.
+- The current appointment with the doctor is **later today**, so the doctor's Home says "in 25 min" and the live visit runs in the demo.
+- 4–6 more patients under the same doctor this week: at least one English speaker, one more with an open alert, one with no check-ins. Each has a date of birth, a clinic and 2–3 check-ins.
+- The demo patient is inserted first, so `patients.getDemo` still returns them.
+
+### Demo path v2
+
+Tap "Call me now" → the agent asks about the dizzy spells in Spanish → the doctor's Home shows the new point and the question → "Go to patient": timeline, quotes, brief, search, ask-the-record → "Start visit", upload the scripted recording, watch the steps → review the attention cards → release → the Spanish summary appears on the phone, medications first → "Talk about my visit" calls the explainer.
+
+### Decisions needed (recommendations first)
+
+- [ ] **Names.** The Figma frames use "Mariela" and "Dr. Lee"; the seed uses María González and Dr. Sarah Chen. Recommend renaming the seed to the designer's names, since the frames are already written with them.
+- [ ] **When is the visit?** The app mock says "12 días"; the website mock says "in 25 min". Recommend later today, so the doctor demo runs the visit live; "12 días" is the general countdown state.
+- [ ] **Questions tab overlap.** Recommend keeping the Questions tab for editing and making the My Visit list read-only, bilingual and large for handing the phone to the doctor. The backend is the same either way.
+- [ ] **Glucose readings.** Recommend adding a `glucoseReadings` table now (P1). The demo story is about readings of 58–70 and 240–250; the doctor chart gains the most. The patient app still shows no glucose judgments, as the designer asks.
+- [ ] **Editing the summary before release.** Recommend approve-only; editing is P2.
+- [ ] **Text size and notification settings** live on the patient record, so no new storage package is needed.
+- [ ] **Chat** is P1 and starts only after the P0 demo path runs on production.
 
 ## System architecture
 
@@ -281,6 +363,96 @@ briefs: defineTable({                // C9, written by elastic.generateBrief
 }).index("by_appointment", ["appointmentId"]),
 ```
 
+### Schema v2 (for the Figma screens)
+
+Proposed; Dev A applies it in one commit on `main` after Dev B agrees. Every new field is optional, so existing rows stay valid. Two new tables (`visitTasks`, `chatMessages`) and one pending a decision (`glucoseReadings`).
+
+```ts
+patients: {
+  ...,
+  dateOfBirth: v.optional(v.string()),            // "1958-03-14", for the age in H7
+  textSize: v.optional(v.union(v.literal("normal"), v.literal("large"), v.literal("xlarge"))),
+  notificationsEnabled: v.optional(v.boolean()),
+  doctorLastViewedAt: v.optional(v.number()),     // H6 "new since last viewed"
+},
+
+appointments: {
+  ...,
+  clinicName: v.optional(v.string()),             // G7
+}.index("by_patient", ["patientId"])
+ .index("by_doctor_time", ["doctorName", "scheduledAt"]),   // H1, H5
+
+conversations: {
+  ...,
+  channel: v.union(v.literal("phone"), v.literal("app"), v.literal("chat")),  // + chat (G16)
+  summaryPatientLang: v.optional(v.string()),     // G1 done line, G18 history
+  endReason: v.optional(v.string()),              // Cartesia end_reason, e.g. "no_answer"
+},
+
+medicationEvents: {
+  ...,
+  conversationId: v.optional(v.id("conversations")),          // now optional: app taps have none
+  medication: v.string(),                         // normalized key, lowercase generic: "glipizide"
+  source: v.optional(v.union(v.literal("voice"), v.literal("app"))),
+  slot: v.optional(v.union(v.literal("morning"), v.literal("midday"),
+                           v.literal("evening"), v.literal("bedtime"))),  // G4 per-dose tap
+},
+
+alerts: {
+  ...,
+  quoteEnglish: v.optional(v.string()),           // H3; `quote` stays in the patient's words
+},
+
+visits: {
+  ...,
+  status: v.string(),                             // uploaded | transcribed | summarized | failed
+  releasedAt: v.optional(v.number()),             // H10 "Released Oct 20"
+  unaddressedSymptoms: v.optional(v.array(v.object({          // D5, H12
+    symptom: v.string(), symptomOriginal: v.string(),
+    lastDate: v.string(), lastSeverity: v.optional(v.number()),
+  }))),
+},
+
+briefs: {
+  ...,
+  sections: v.optional(v.object({                 // H8; textEnglish stays as the plain version
+    overview: v.string(),
+    concerns: v.array(briefItem),
+    topics: v.array(briefItem),
+  })),
+},
+// briefItem = { text: string, citations: [{ symptomEntryId?: string, date: string,
+//               quoteOriginal: string, quoteEnglish: string }] }
+
+visitTasks: defineTable({                         // G11, written by Track A, ticked by Track B
+  visitId: v.id("visits"), appointmentId: v.id("appointments"), patientId: v.id("patients"),
+  kind: v.union(v.literal("prescription"), v.literal("follow_up"), v.literal("test"), v.literal("other")),
+  textEnglish: v.string(), textPatientLang: v.string(),
+  order: v.number(), done: v.boolean(), doneAt: v.optional(v.number()),
+}).index("by_visit", ["visitId"]).index("by_patient", ["patientId"]),
+
+chatMessages: defineTable({                       // G16, one conversations row per chat session
+  conversationId: v.id("conversations"), patientId: v.id("patients"),
+  role: v.union(v.literal("user"), v.literal("assistant")),
+  text: v.string(),                               // in the patient's language
+  createdAt: v.number(),
+  pending: v.optional(v.boolean()),               // assistant reply still being written
+  redFlag: v.optional(v.boolean()),               // opens the "Call 911 now" screen (G17)
+  citations: v.optional(v.array(v.object({ chunkIndex: v.number(), textPatientLang: v.string() }))),  // F2
+}).index("by_conversation", ["conversationId"]),
+
+glucoseReadings: defineTable({                    // decision pending; P1 doctor chart only
+  patientId: v.id("patients"), appointmentId: v.id("appointments"),
+  conversationId: v.id("conversations"), date: v.string(),
+  valueMgDl: v.number(),
+  context: v.union(v.literal("fasting"), v.literal("before_meal"), v.literal("after_meal"),
+                   v.literal("bedtime"), v.literal("unknown")),
+  quoteOriginal: v.string(), quoteEnglish: v.string(),
+}).index("by_patient_date", ["patientId", "date"]),
+```
+
+Who writes what: Track A writes `visitTasks`, `chatMessages`, `glucoseReadings`, `alerts.quoteEnglish`, and the new `conversations` and `visits` fields; Track B owns every read and every typed edit of them (the same rule as `alerts` and `questions`). Track B writes app `medicationEvents` (`source: "app"`) and the new `patients` fields.
+
 ### Elastic indices
 
 Mappings below are the shape; `ELASTIC.md` section 5 adds the explicit Jina `inference_id` on each `semantic_text` field. Documents use the Convex `symptomEntryId` as `_id`, so re-indexing is idempotent. Index names carry `ELASTIC_INDEX_PREFIX`.
@@ -391,6 +563,14 @@ Every request carries the header `x-webhook-secret: $CARTESIA_WEBHOOK_SECRET`, a
 
 Extraction rule for Claude: only record what the patient said. Never infer a severity number they did not give.
 
+**v2 additions (Figma scope):**
+
+- `summary_patient_lang`: the same two or three sentences in the patient's language, saved to `conversations.summaryPatientLang` (G1, G18).
+- `medications[].medication` is a normalized key: lowercase English generic name ("metformina" → "metformin"), the same key as VisitSummary v2 `medications[].key`, so the app's "Taken" taps and the call's reports land in one row of the week grid (G13).
+- `glucose_readings: [{ value_mg_dl, context, quote_original, quote_english }]` if the glucose decision is approved.
+- A call that ends with no patient turns (no answer, voicemail, busy) is marked `failed` with Cartesia's `end_reason` in `conversations.endReason`, not `processed`. A Claude or Elastic error after a real conversation keeps `endReason: "error"`. `callSchedule` turns these into "missed" for the Home tile.
+- The red-flag webhook stores `quote` as spoken, then schedules a Claude translation into `alerts.quoteEnglish` (H3).
+
 ### Check-in agent prompt (draft)
 
 ```text
@@ -439,6 +619,27 @@ Never add medical advice beyond what the doctor said. Same red-flag rules as che
 
 Claude generates it in English, then a second pass writes the patient-language version at a plain reading level. Medications come first on the patient screen.
 
+### Visit summary JSON v2 (Figma scope)
+
+Replaces the shape above. Both languages share the structure; `key`, `times_of_day`, `change` and `source_turn` are identical in both versions. `source_turn` is the index into `visits.transcript` (H13).
+
+```jsonc
+{ "assessment": "string",
+  "medications": [{ "key": "glipizide", "name": "", "dose": "", "schedule": "",
+                    "times_of_day": ["morning"],              // morning | midday | evening | bedtime
+                    "purpose": "", "change": "changed",        // new | changed | same | stopped
+                    "source_turn": 12 }],
+  "instructions": [{ "text": "string", "source_turn": 14 }],
+  "tests_ordered": [{ "text": "string", "source_turn": 15 }],
+  "follow_up": "string",
+  "warning_signs": ["string"] }
+```
+
+- G3 "Today's medications" lists every medication whose `change` is not `stopped`, one row per `times_of_day` entry.
+- The same Claude call returns `tasks: [{ kind, text_english, text_patient_lang }]` (pick up the new prescription, book the follow-up, each ordered test). Track A writes them to `visitTasks`; they are not stored in the summary.
+- D5: after summarizing, Claude gets the symptoms reported since the previous visit (latest entry per symptom) and the transcript, and returns those never discussed. Track A saves them as `visits.unaddressedSymptoms`.
+- Breaking change: `instructions` and `tests_ordered` become objects. Track B's summary screens switch to `item.text` in the same merge as Track A's change; the seed writes v2.
+
 ## Team workflow
 
 Two developers each run their own Claude Code on one repo, split by file ownership. Before either starts, one of them writes a shared contract (schema plus stub functions). Merge conflicts come from two agents editing the same file; this split makes that rare, and the contract keeps the two halves matching.
@@ -447,8 +648,8 @@ Two developers each run their own Claude Code on one repo, split by file ownersh
 
 | Track | Person | Owns these files | Features |
 | --- | --- | --- | --- |
-| A: Voice + AI pipeline | Dev A | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs | B1–B3, B4 voice client, B7, D1–D5 processing, E2, E3 |
-| B: Data + apps | Dev B | `convex/elastic.ts`, `convex/briefs.ts`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `/elastic/*`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files | A1–A3, B5, B6, B8, C1–C9 (all Elastic work, see `ELASTIC.md`), E1, E4 UI, applying designs |
+| A: Voice + AI pipeline | Dev A | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `convex/chat.ts`, `convex/lib/time.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs | B1–B3, B4 voice client, B7, D1–D5 processing, E2, E3; v2: G1 and G18 backend, G3 and G11–G12 data, G16 chat backend, H3 translation, H12 D5, H13 |
+| B: Data + apps | Dev B | `convex/elastic.ts`, `convex/briefs.ts`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `convex/medications.ts`, `convex/tasks.ts`, `convex/dashboard.ts`, `convex/health.ts`, `convex/notifications.ts`, `/elastic/*`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files | A1–A3, B5, B6, B8, C1–C9 (all Elastic work, see `ELASTIC.md`), E1, E4 UI, applying designs; v2: every G and H screen, G2, G4, G13–G15 queries, H1–H8 queries, H8 structured brief |
 | Design | Designer | Figma file | Every screen in the Design integration section |
 | Shared | Dev A approves changes | `convex/schema.ts`, `convex/seed.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `ELASTIC.md`, `CLAUDE.md` | — |
 
@@ -461,6 +662,22 @@ The two tracks touch in only a few functions. The contract defines them on day o
 | `internal.elastic.searchVisit` | B | A's `/cartesia/search-visit` | Top 3 visit passages |
 | `api.calls.triggerNow` | A | B's "Call me now" button | Start a call right away |
 | `api.calls.getAccessToken` | A | A's voice client in the app | Short-lived Cartesia token |
+
+**v2 additions (Figma scope).** Dev A stubs these in Phase 0 with real validators, so Track B builds screens against them on day one.
+
+| Function | Owner | Called by | Args → returns |
+| --- | --- | --- | --- |
+| `api.calls.callSchedule` (query) | A | B's Home tile (G1) | `{ patientId }` → `{ state: "off" \| "scheduled" \| "soon" \| "calling" \| "missed" \| "done", nextCallAt: number \| null, conversationId: Id \| null, lastCheckin: null \| { conversationId, startedAt, summaryPatientLang: string \| null, summaryEnglish: string \| null } }`. `soon` = within 15 min of `nextCallAt`; `missed` = today's latest call failed with no patient turns; `done` = today's check-in processed. The cron uses the same rule, so the tile and the dialer always agree |
+| `api.visits.listForPatient` (query) | A | B's past visits (G12, G13, H10) | `{ patientId }` → `[{ _id, appointmentId, scheduledAt, doctorName, status, releasedToPatient, releasedAt: number \| null }]`, newest first, no transcript |
+| `api.visits.latestReleasedSummary` (query) | A | B's Home and My Visit (G3, G5) | `{ patientId }` → `null \| { visitId, appointmentId, scheduledAt, doctorName, summaryEnglish, summaryPatientLang }` (VisitSummary v2) |
+| `internal.visits.reindexAllChunks` | A | the seed, after `elastic.reindexAll` | `{}` → `null`; re-indexes passages of every visit with a transcript |
+| `api.chat.start` (mutation) | A | B's chat screen (G16) | `{ patientId }` → `{ conversationId }`; picks check-in or explainer mode like `triggerNow` |
+| `api.chat.send` (mutation) | A | B's chat screen | `{ conversationId, text }` → `null`; inserts the user message and a `pending` assistant message, which Claude fills |
+| `api.chat.messages` (query) | A | B's chat screen | `{ conversationId }` → `[{ _id, role, text, createdAt, pending?, redFlag?, citations? }]`, oldest first |
+| `api.chat.end` (mutation) | A | B's chat close button | `{ conversationId }` → `null`; runs the post-call pipeline on the messages. Also runs after 10 idle minutes |
+| `api.chat.generateUploadUrl`, `api.chat.transcribeClip` (action) | A | B's chat mic | `{ storageId, language }` → `{ text }`, via Ink batch transcription |
+
+Track B's new functions (`medications.markTaken`, `medications.week`, `tasks.listForVisit`, `tasks.setDone`, `appointments.cycle`, `dashboard.doctorHome`, `health.overview`, `notifications.list`, `patients.markViewed`) are called only by Track B's apps, so they are not part of the contract. Two changes to existing functions keep their validators: `visits.release` also sets `releasedAt`, and Track B's visit upload calls `appointments.markCompleted` after `visits.create`.
 
 ### Step 1: write the contract (Dev A, Sat 3–4:30 AM)
 
@@ -511,31 +728,34 @@ Build the backend and plain, unstyled screens first, then apply the designs in o
 - Claude Code reads the Figma file through Figma's MCP server ([Figma](https://help.figma.com/hc/en-us/articles/32132100833559-Guide-to-the-Figma-MCP-server)). In Claude Code, run `claude mcp add --transport http figma-desktop http://127.0.0.1:3845/mcp` for the desktop app, or point it at the remote server `https://mcp.figma.com/mcp`.
 - The MCP server needs a paid Figma plan with a Dev or Full seat. If the designer doesn't have one, he exports each frame as a PNG and Dev B gives the images to Claude Code with the exact values from Figma's Inspect panel.
 
-### Screen inventory (designer builds these)
+### Screen inventory v2 (from the Figma docs)
 
-Design only data that exists. Each screen lists the fields the backend provides.
+Each Figma screen and the functions it reads and writes. When a frame is imported, wire it to exactly these; anything not listed here doesn't exist yet and needs a spec change first. "v2" marks functions added in the Figma scope.
 
-| # | Screen | App | Shows | Priority | Delivery |
-| --- | --- | --- | --- | --- | --- |
-| 1 | Doctor patient view (the hero screen) | Doctor web | 14-day severity chart per symptom (days with no report shown as gaps), medication markers, history card per symptom (onset, location, duration, character, aggravating, relieving, timing, severity), quotes in Spanish with English, question list, red-flag alert banner, search box, "Ask the record" box (answer, cited dated quotes, expandable "how this was found" steps), pre-visit brief card with "Generate brief" button (P1) | P0 | 1 |
-| 2 | Patient home | Mobile | Next visit countdown, "Call me now" button, today's check-in done or pending, last check-in summary | P0 | 1 |
-| 3 | Visit summary | Mobile | Medications first (name, dose, schedule, purpose), instructions, follow-up, warning signs, "Talk about my visit" button | P0 | 1 |
-| 4 | Question queue | Mobile | List with source tag (typed or voice), add, edit, reorder, delete | P0 | 2 |
-| 5 | Onboarding and profile | Mobile | Name, phone, language, daily call time, consent to calls, reason for visit | P0 | 2 |
-| 6 | Patient list | Doctor web | Name, next appointment, alert badge | P0 | 2 |
-| 7 | Visit view | Doctor web | Transcript with speaker labels, summary, question coverage, "Release to patient" button | P1 | 2 |
-| 8 | Search results | Doctor web | Matching quotes with date, symptom, original language and English, ranked | P0 | 2 |
-| 9 | Check-in history | Mobile | Date, symptoms, severity per call | P1 | 2 |
-| 10 | In-app voice call | Mobile | Speaking or listening state, end button, live captions | P1 | 2 |
+**Patient app** (tabs: Home, My Visit, Questions, My Health, Settings; floating chat button)
 
-### Delivery schedule
+| Screen | Priority | Reads | Writes |
+| --- | --- | --- | --- |
+| Home | P0 | `patients.getDemo`, `appointments.cycle` (v2), `calls.callSchedule` (v2), `visits.latestReleasedSummary` (v2), `questions.listForAppointment`, `medications.week` (v2, for ticked doses) | `calls.triggerNow`, `medications.markTaken` (v2, P1) |
+| My Visit | P0 | `appointments.current`, `visits.getByAppointment`, `questions.listForAppointment`, `tasks.listForVisit` (v2), `visits.listForPatient` (v2) | `tasks.setDone` (v2, P1), `calls.triggerNow` ("Talk about my visit") |
+| Questions | P0 | `questions.listForAppointment` | `questions.add`, `edit`, `remove`, `reorder` |
+| My Health | P1 | `health.overview` (v2), `elastic.timeline` with `from`, `medications.week`, `visits.listForPatient` | — |
+| Settings and onboarding | P0 | `patients.getDemo`, `appointments.current` | `patients.create`, `patients.update` (incl. `textSize`, `notificationsEnabled`) |
+| Check-in history | P1 | `patients.conversations` (add `summaryPatientLang` to its row) | — |
+| Notification bell | P1 | `notifications.list` (v2) | — |
+| Chat log, "Call 911 now" | P1 | `chat.messages` (v2) | `chat.start`, `chat.send`, `chat.end`, `chat.transcribeClip` (v2) |
+| In-app voice | P1 | `useVoiceSession` | — |
 
-| Delivery | Due | Contents |
-| --- | --- | --- |
-| 0 | Sat 9 AM | Rough wireframes for screens 1–3, shared in team chat so devs can match the layout |
-| 1 | Sat 1 PM | Design tokens as Figma variables (colors, type, spacing, radius), and final screens 1–3 |
-| 2 | Sat 6 PM | Screens 4–10, plus empty, loading, and error states |
-| Freeze | Sat midnight | Only fixes after this |
+**Doctor web** (tabs: Home, Patients)
+
+| Screen | Priority | Reads | Writes |
+| --- | --- | --- | --- |
+| Home | P0 | `dashboard.doctorHome` (v2: counts, alerts with patient names, next appointment card, upcoming groups), `patients.list` (find patient) | `alerts.acknowledge` |
+| Patients table | P0 | `patients.list` (add language, last check-in time, `doctorLastViewedAt`) | `patients.markViewed` (v2, P1) |
+| Patient view | P0 | `patients.get`, `appointments.current`, `alerts.listForPatient`, `briefs.getByAppointment` (with `sections`), `elastic.timeline`, `patients.symptomEntries`, `patients.medicationEvents`, `questions.listForAppointment`, `elastic.searchCheckins`, `elastic.askRecord`, `visits.getByAppointment` (visit button) | `elastic.generateBrief`, `alerts.acknowledge` |
+| Visit view | P0 | `visits.getByAppointment` (transcript, summaries, `unaddressedSymptoms`, `releasedAt`), `questions.listForAppointment` (coverage) | `visits.generateUploadUrl`, `visits.create`, `appointments.markCompleted`, `visits.release` |
+
+Every screen also needs its empty, loading and error states; ask the designer for them if the frames don't include them.
 
 ### Notes for the designer
 
@@ -544,7 +764,75 @@ Design only data that exists. Each screen lists the fields the backend provides.
 - **Safety:** "Not for emergencies, call 911" appears on the patient home and the visit summary.
 - **Figma sponsor track:** the hacker guide lists a Figma track (Amazon gift cards plus a session with Figma's early-career recruiting team) with a criteria doc, and Figma runs a workshop. The designer should read the criteria early; this project can enter it.
 
-## Build plan
+## Build plan v2: UI integration
+
+Build plan v1 (below) is done except B4, D5, E3 and the brief cron. v2 makes the backend serve every Figma screen before the frames are imported. Order: Phase 0 (contract), then both tracks in parallel, P0 blocks first. Cut P1 before P0, as before.
+
+### Phase 0: contract v2 (Dev A first, Dev B reviews)
+
+- [ ] Settle the "Decisions needed" list in Figma scope with Dev B and the designer
+- [ ] `convex/schema.ts`: apply Schema v2 (all new fields optional)
+- [ ] Stub every v2 contract function (Team workflow) with real validators and fake returns; stub `convex/chat.ts`
+- [ ] Move `localDate` and `localTime` from `calls.ts` to `convex/lib/time.ts` so Track B can import them (G4 dates, H4 completion counts)
+- [ ] Seed v2 (Figma scope → Demo data), with VisitSummary v2 for the past visit; the seed calls `internal.visits.reindexAllChunks` after `elastic.reindexAll`
+- [ ] `CLAUDE.md`: new files in the ownership table, v2 functions in the contract table
+- [ ] `npx convex dev --once`, `npm run typecheck`, merge to `main`; Dev B pulls before starting
+
+```text
+Dev A prompt: I am Track A. Read SPEC.md: Figma scope (v2), Data model → Schema v2, Team
+workflow → the v2 contract, Build plan v2 → Phase 0. Apply Schema v2 to convex/schema.ts,
+stub every v2 contract function with real validators and fake returns (handlers annotated
+from the returns validator), move the time helpers to convex/lib/time.ts, rewrite the seed
+to the v2 demo data, and update CLAUDE.md's tables. Don't implement features. Typecheck.
+```
+
+### Track A (Dev A)
+
+| Block | Priority | Work | Unblocks |
+| --- | --- | --- | --- |
+| A1 Call states | P0 | No-answer → `failed` + `endReason`; extraction adds `summary_patient_lang` and normalized medication keys; real `callSchedule`; the cron uses the same "due" rule | G1, G18, H4 completion |
+| A2 Visit v2 | P0 | `summarizeVisit` returns VisitSummary v2 plus tasks; write `visitTasks`; D5 `unaddressedSymptoms`; `release` sets `releasedAt`; `listForPatient`, `latestReleasedSummary`, `reindexAllChunks`; explainer `medications` variable built from v2 | G3, G5, G10–G12, H10, H12, H13 |
+| A3 Alert translation | P0 | `createAlert` schedules Claude into `quoteEnglish` | H3 |
+| A4 Brief cron | P1 | One line in `crons.ts`: `internal.elastic.generateBriefsForUpcoming` daily | H8 freshness |
+| A5 Chat backend | P1 | `convex/chat.ts`: Claude with tools (`add_question`, `report_red_flag`, `search_visit` via `internal.elastic.searchVisit`); before-visit replies act like the check-in agent, after-visit replies answer only from passages and return `citations`; red flags create an alert and set `redFlag`; `end` feeds the messages to `processConversation`; `transcribeClip` via `transcribeFile` | G16, G17, F2 |
+| A6 Glucose | P1, if approved | Extraction `glucose_readings` → `glucoseReadings` rows | Doctor glucose chart |
+| A7 Voice + teach-back | P1 | Test E3 on a real explainer call; B4: `mintAccessToken`, `getAccessToken`, `useVoiceSession` on a dev build | B4 |
+
+```text
+Track A prompt: I am Track A. Read SPEC.md: Figma scope (v2), Schema v2, Voice agent design
+(v2 additions and Visit summary JSON v2), and the v2 contract. Implement block <A1|A2|A3>
+from Build plan v2. Keep every contract validator unchanged. Don't edit Track B files; if a
+Track B screen breaks because of a v2 shape change, list the exact change for Dev B.
+Run npm run typecheck, then test with npx convex run (calls:demoCall, visits:devCreateFromText).
+```
+
+### Track B (Dev B)
+
+| Block | Priority | Work | Depends on |
+| --- | --- | --- | --- |
+| B1 Doctor Home + Patients tab | P0 | Two-tab layout; `dashboard.doctorHome` (welcome counts, alerts strip joined with patient names and `quoteEnglish`, next appointment card with check-in completion and top concerns, upcoming groups); find patient; patients table with language, alerts pinned | Phase 0 |
+| B2 Patient view + visit view | P0 | Header strip with age, countdown, language badge, visit button state machine, red-flag banner; brief as overview; timeline side panel; keep C6, C7 and "Generate brief" in the layout; visit view with attention cards (D4, D5), side-by-side summary (v2 `item.text`), release confirm | Phase 0; A2 for live D5 |
+| B3 Mobile navigation + Home | P0 | Tabs; `appointments.cycle`; Home tile from `callSchedule`; today's medications and instructions from `latestReleasedSummary`; before-first-visit empty state; safety line | Phase 0; A1, A2 for live data |
+| B4 My Visit + Settings | P0 | Visit card with clinic; bilingual questions; summary or "reviewing"; answered and carried-over marks; past visits; Settings with consent confirm and read-only appointment | Phase 0 |
+| B5 Elastic v2 | P1 | `timeline` takes `from` and returns visit dates for markers; brief returns `sections` with `symptomEntryId` citations (agent output schema in `/elastic`), source links in the overview | Phase 0 |
+| B6 Patient P1 screens | P1 | "Taken" button + `medications.markTaken`/`week`; My Health with `health.overview`; after-visit checklist with `tasks.setDone`; bell with `notifications.list`; text size; demo sign-out picker; "new since viewed" dot | Phase 0; A2 for tasks |
+| B7 Chat UI | P1 | Floating "Pregunte" button, chat log, suggested prompts, mic recording with `expo-audio`, "Call 911 now" screen | A5 |
+| B8 Figma import | P0 when frames are final | Figma variables → both `theme.ts`; restyle the shared components; rebuild screens frame by frame, keeping the data wiring from the Screen inventory v2 | B1–B4 |
+
+```text
+Track B prompt: I am Track B. Read SPEC.md (Figma scope (v2), Schema v2, Screen inventory
+v2, the v2 contract) and ELASTIC.md. Build block <B1..B7> from Build plan v2 as unstyled
+screens from the shared components and theme.ts, against the v2 stubs and seed data. Use
+only the functions the Screen inventory lists for each screen. Don't edit Track A files.
+```
+
+### Merge points
+
+1. **Phase 0 merged:** both tracks pull, then work in parallel.
+2. **P0 complete** (A1–A3, B1–B4): `npx convex deploy` from `main`, reseed production, run Demo path v2 once on production.
+3. **Figma import** (B8) on top of a working P0, then P1 blocks as time allows, re-running the demo path after each merge.
+
+## Build plan v1 (done)
 
 Dev A builds the voice pipeline, Dev B builds data and screens, and the designer delivers in two batches. The call-to-chart spine must work on production by the noon merge.
 
