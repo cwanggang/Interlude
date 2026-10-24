@@ -1,0 +1,27 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Mascot &#194;&#183; concern">
+<g id="Frame" clip-path="url(#clip0_0_6)">
+<g id="Vector">
+<path d="M24 2.88C35.04 2.4 44.64 10.56 45.12 22.56C45.6 34.56 37.92 45.6 24.48 45.6C11.04 45.6 2.88 36.96 2.88 24.48C2.88 12 12.96 3.36 24 2.88Z" fill="url(#paint0_linear_0_6)"/>
+<mask id="stroke0_0_6" maskUnits="userSpaceOnUse" x="-0.12" y="-0.140104" width="49" height="49" fill="black">
+<rect fill="white" x="-0.12" y="-0.140104" width="49" height="49"/>
+<path d="M24 2.88C35.04 2.4 44.64 10.56 45.12 22.56C45.6 34.56 37.92 45.6 24.48 45.6C11.04 45.6 2.88 36.96 2.88 24.48C2.88 12 12.96 3.36 24 2.88Z"/>
+</mask>
+<path d="M24 2.88C35.04 2.4 44.64 10.56 45.12 22.56C45.6 34.56 37.92 45.6 24.48 45.6C11.04 45.6 2.88 36.96 2.88 24.48C2.88 12 12.96 3.36 24 2.88Z" stroke-width="6" stroke="white" stroke-opacity="0.75" mask="url(#stroke0_0_6)"/>
+</g>
+</g>
+<ellipse id="Ellipse" cx="14.4" cy="10.8" rx="4.8" ry="2.64" fill="white" fill-opacity="0.5"/>
+<rect id="Rectangle" x="16.8" y="17.28" width="5.04" height="11.04" rx="2.4" transform="rotate(-14 16.8 17.28)" fill="#0D2A3A"/>
+<rect id="Rectangle_2" x="26.88" y="17.28" width="5.04" height="11.04" rx="2.4" transform="rotate(14 26.88 17.28)" fill="#0D2A3A"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_6" x1="2.88" y1="2.8599" x2="45.6174" y2="45.1185" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+<clipPath id="clip0_0_6">
+<rect width="48" height="48" fill="white"/>
+</clipPath>
+</defs>
+</svg>
