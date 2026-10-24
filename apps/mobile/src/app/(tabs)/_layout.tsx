@@ -2,6 +2,7 @@
 import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
 
+import { ChatButton } from '../../ChatButton';
 import { theme } from '../../theme';
 import { usePatient } from '../../usePatient';
 
@@ -23,6 +24,7 @@ export default function TabsLayout() {
         tabBarLabelStyle: { fontSize: theme.font.size.sm },
         tabBarStyle: { minHeight: theme.minTap + theme.space.lg },
         sceneStyle: { backgroundColor: theme.color.bg },
+        headerRight: () => <ChatButton />,
       }}
     >
       <Tabs.Screen name="index" options={{ tabBarLabel: s.tabHome, tabBarIcon: icon('🏠') }} />

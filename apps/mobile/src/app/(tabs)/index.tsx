@@ -9,6 +9,7 @@ import { Pressable, View } from 'react-native';
 import { api } from '../../../../../convex/_generated/api';
 import type { Id } from '../../../../../convex/_generated/dataModel';
 import { CallMeNow } from '../../CallMeNow';
+import { ChatButton } from '../../ChatButton';
 import { Badge, Button, Card, ListItem, Screen, ScreenTitle, Text } from '../../components';
 import { formatDate, formatTime, type Language, type Strings } from '../../i18n';
 import { theme } from '../../theme';
@@ -43,7 +44,12 @@ export default function Home() {
 
   return (
     <Screen footer={<Text variant="muted">{s.disclaimer}</Text>}>
-      <ScreenTitle title={s.hello(patient.name.split(' ')[0], new Date(now).getHours())} right={<Bell patientId={patient._id} now={now} s={s} />} />
+      <ScreenTitle title={s.hello(patient.name.split(' ')[0], new Date(now).getHours())} right={
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Bell patientId={patient._id} now={now} s={s} />
+            <ChatButton />
+          </View>
+        } />
 
       {cycle && schedule && <Tile cycle={cycle} schedule={schedule} now={now} language={language} s={s} />}
 

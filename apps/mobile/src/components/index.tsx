@@ -223,7 +223,8 @@ export function Choice<T extends string>({ value, options, onChange }: { value: 
 export function ScreenTitle({ title, right }: { title: string; right?: ReactNode }) {
   const navigation = useNavigation();
   useLayoutEffect(() => {
-    navigation.setOptions({ title, headerRight: right ? () => right : undefined });
+    // Only override headerRight when given one, so a layout's default (the chat button) stays.
+    navigation.setOptions(right ? { title, headerRight: () => right } : { title });
   }, [navigation, title, right]);
   return null;
 }
