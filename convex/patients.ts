@@ -156,6 +156,9 @@ export const update = mutation({
     timezone: v.optional(v.string()),
     consentCalls: v.optional(v.boolean()),
     reasonForVisit: v.optional(v.string()),
+    // G14 Settings (Schema v2)
+    textSize: v.optional(v.union(v.literal("normal"), v.literal("large"), v.literal("xlarge"))),
+    notificationsEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, { patientId, ...fields }) => {

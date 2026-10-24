@@ -23,6 +23,7 @@ import type * as patients from "../patients.js";
 import type * as pipeline from "../pipeline.js";
 import type * as questions from "../questions.js";
 import type * as seed from "../seed.js";
+import type * as tasks from "../tasks.js";
 import type * as visits from "../visits.js";
 
 import type {
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   pipeline: typeof pipeline;
   questions: typeof questions;
   seed: typeof seed;
+  tasks: typeof tasks;
   visits: typeof visits;
 }>;
 
