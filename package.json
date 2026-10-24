@@ -1,0 +1,23 @@
+{
+  "name": "interlude",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "convex": "convex dev",
+    "doctor": "npm run dev -w doctor",
+    "mobile": "npm run start -w mobile",
+    "seed": "convex run seed:run",
+    "typecheck": "tsc -p convex --noEmit && npm run typecheck -w doctor && npm run typecheck -w mobile"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@elastic/elasticsearch": "^9.5.1",
+    "convex": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~6.0.3"
+  }
+}
