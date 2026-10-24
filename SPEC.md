@@ -14,7 +14,7 @@ We are building a bilingual (English and Spanish) voice companion. It checks in 
 
 1. Export this doc as Markdown and save it in the repo root as `SPEC.md`.
 2. Add a `CLAUDE.md` that says: "Read SPEC.md before every task. Build only the phase you are asked for. Ask before changing the data model or the stack."
-3. Build one phase at a time from the Build plan section. Each phase has a ready-to-paste prompt.
+3. Each developer builds only their own track (see Team workflow), one block at a time from the Build plan section. Each block has a ready-to-paste prompt.
 4. Priority labels used throughout: **P0** = must work live in the demo. **P1** = build once P0 works. **P2** = mention in the pitch only.
 
 ## Key decisions
@@ -38,6 +38,8 @@ These eight decisions set the stack. Several of them correct earlier assumptions
 6. **The doctor interface is a web app, not mobile.** Doctors read dashboards on a computer, and charts are easier to build on the web. It uses the same Convex backend.
 7. **Convex is the source of truth; Elastic is the search and analytics copy.** Every write goes to Convex first, and a Convex action then indexes it in Elastic. The apps never call Elastic directly.
 8. **No real auth or patient data.** Use seeded demo accounts. In the pitch, say it is a prototype and not HIPAA-compliant; production needs vendors covered by a business associate agreement (BAA) and human interpreter backup.
+9. **Backend first, design second.** Engineers build working but unstyled screens from a shared component set while the designer works. The designs are applied in one pass Saturday evening (see Design integration).
+10. **Two coding tracks, one contract.** Two developers each run Claude Code on separate files, after a contract (schema plus stub functions) is merged first (see Team workflow).
 
 ## Functional spec
 
@@ -146,6 +148,9 @@ The stack has seven layers. Convex sits in the middle, and nothing else talks to
 /convex            schema, queries, mutations, actions, crons.ts, http.ts
 /apps/mobile       Expo app (patient)
 /apps/doctor       Vite + React app (doctor)
+/apps/mobile/src/theme.ts + src/components/   design tokens + 6 shared components
+/apps/mobile/src/voice/   in-app voice client (Track A)
+/apps/doctor/src/theme.ts + src/components/
 /scripts/seed.ts   7 days of demo check-ins + one appointment
 /assets/demo-visit.m4a   scripted visit recording
 SPEC.md  CLAUDE.md  README.md
@@ -409,80 +414,171 @@ Never add medical advice beyond what the doctor said. Same red-flag rules as che
 
 Claude generates it in English, then a second pass writes the patient-language version at a plain reading level. Medications come first on the patient screen.
 
+## Team workflow
+
+Two developers each run their own Claude Code on one repo, split by file ownership. Before either starts, one of them writes a shared contract (schema plus stub functions). Merge conflicts come from two agents editing the same file; this split makes that rare, and the contract keeps the two halves matching.
+
+### Who owns what
+
+| Track | Person | Owns these files | Features |
+| --- | --- | --- | --- |
+| A: Voice + AI pipeline | Dev A | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs | B1–B3, B4 voice client, B7, D1–D5 processing, E2, E3 |
+| B: Data + apps | Dev B | `convex/elastic.ts`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files | A1–A3, B5, B6, B8, C1–C8, E1, E4 UI, applying designs |
+| Design | Designer | Figma file | Every screen in the Design integration section |
+| Shared | Dev A approves changes | `convex/schema.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `CLAUDE.md` | — |
+
+The two tracks touch in only five functions. The contract defines all five on day one, so neither side waits for the other:
+
+| Function | Owner | Called by | Purpose |
+| --- | --- | --- | --- |
+| `internal.elastic.indexCheckin` | B | A's pipeline | Index one symptom entry |
+| `internal.elastic.indexVisitChunks` | B | A's visit processing | Index visit passages |
+| `internal.elastic.searchVisit` | B | A's `/cartesia/search-visit` | Top 3 visit passages |
+| `api.calls.triggerNow` | A | B's "Call me now" button | Start a call right away |
+| `api.calls.getAccessToken` | A | A's voice client in the app | Short-lived Cartesia token |
+
+### Step 1: write the contract (Dev A, Sat 3–4:30 AM)
+
+Dev A's Claude Code writes, and pushes to `main`:
+
+1. The repo scaffold from the Tech stack section, as an npm workspace so each app has its own `package.json`.
+2. The full `convex/schema.ts` from the Data model section.
+3. Every file in the ownership table, with each exported function stubbed: real argument and return validators, fake return values.
+4. `scripts/seed.ts`, so Dev B has data for screens from the first hour.
+5. `CLAUDE.md` containing the ownership table and the rules below.
+
+Dev B reviews the stubs before writing any code. A disagreement about a function's shape gets settled now, not at the first merge.
+
+### Rules for both Claude Code sessions (put these in `CLAUDE.md`)
+
+- Start every session with: "I am Track A" or "I am Track B". Only edit files your track owns.
+- Need a schema change or a new cross-track function? Stop and tell your human. They agree with the other dev in chat, then Dev A makes the change on `main` in its own small commit.
+- Never hand-merge `convex/_generated/`. On a conflict there, take either side and run `npx convex dev --once` to regenerate it.
+- Lockfile conflict: take `main`'s version, then run `npm install`.
+
+### Git
+
+- Branches: `a/<feature>` and `b/<feature>`.
+- Merge to `main` at least every 2 hours, and always at the four merge points in the Build plan.
+- Pull `main` before giving Claude Code a new task.
+
+### Keeping two backends from colliding
+
+- **Convex:** each team member gets their own dev deployment when they run `npx convex dev`, plus one shared production deployment ([Convex](https://docs.convex.dev/production/overview)). Develop on your own; at each merge point, one person runs `npx convex deploy` from `main`. Set API keys as project default environment variables so both dev deployments get them.
+- **Elastic:** one cluster, but each deployment writes to its own index names via `ELASTIC_INDEX_PREFIX` (`a_`, `b_`, `prod_`).
+- **Cartesia:** webhook tool URLs can only point at one backend. During the day they point at Dev A's dev deployment (`https://<a-dev>.convex.site`); switch them to production at the noon merge. Dev B builds against seed data and doesn't need live calls.
+
+### Why two tracks instead of one agent
+
+One agent working through the whole plan is safer but serial. Every phase waits on one person to test calls, review code, and restart the agent. The two tracks are mostly independent: the voice pipeline barely touches the UI. Splitting roughly halves the wall-clock time, and the contract plus file ownership keeps the merge risk small. Don't go beyond two coding tracks; a third agent would collide with these two.
+
+## Design integration
+
+Build the backend and plain, unstyled screens first, then apply the designs in one pass between 6 PM and midnight Saturday. The screens are built from a small shared component set that reads every color and font from one `theme.ts`, so most of the restyle happens in a few files instead of every screen.
+
+### How the code is set up to receive the design
+
+- Each app has one `theme.ts` (colors, type sizes, spacing, corner radius) and about six components: `Screen`, `Card`, `Button`, `Text`, `Badge`, `ListItem`. Screens use only these; no inline colors.
+- Applying the design happens in three steps:
+  1. Copy the designer's Figma variables into `theme.ts`.
+  2. Restyle the six components.
+  3. Adjust layouts screen by screen.
+- Claude Code reads the Figma file through Figma's MCP server ([Figma](https://help.figma.com/hc/en-us/articles/32132100833559-Guide-to-the-Figma-MCP-server)). In Claude Code, run `claude mcp add --transport http figma-desktop http://127.0.0.1:3845/mcp` for the desktop app, or point it at the remote server `https://mcp.figma.com/mcp`.
+- The MCP server needs a paid Figma plan with a Dev or Full seat. If the designer doesn't have one, he exports each frame as a PNG and Dev B gives the images to Claude Code with the exact values from Figma's Inspect panel.
+
+### Screen inventory (designer builds these)
+
+Design only data that exists. Each screen lists the fields the backend provides.
+
+| # | Screen | App | Shows | Priority | Delivery |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Doctor patient view (the hero screen) | Doctor web | 14-day severity chart per symptom, medication markers, history card per symptom (onset, location, duration, character, aggravating, relieving, timing, severity), quotes in Spanish with English, question list, red-flag alert banner | P0 | 1 |
+| 2 | Patient home | Mobile | Next visit countdown, "Call me now" button, today's check-in done or pending, last check-in summary | P0 | 1 |
+| 3 | Visit summary | Mobile | Medications first (name, dose, schedule, purpose), instructions, follow-up, warning signs, "Talk about my visit" button | P0 | 1 |
+| 4 | Question queue | Mobile | List with source tag (typed or voice), add, edit, reorder, delete | P0 | 2 |
+| 5 | Onboarding and profile | Mobile | Name, phone, language, daily call time, consent to calls, reason for visit | P0 | 2 |
+| 6 | Patient list | Doctor web | Name, next appointment, alert badge | P0 | 2 |
+| 7 | Visit view | Doctor web | Transcript with speaker labels, summary, question coverage, "Release to patient" button | P1 | 2 |
+| 8 | Search results | Doctor web | Matching quotes with date, original language and English | P1 | 2 |
+| 9 | Check-in history | Mobile | Date, symptoms, severity per call | P1 | 2 |
+| 10 | In-app voice call | Mobile | Speaking or listening state, end button, live captions | P1 | 2 |
+
+### Delivery schedule
+
+| Delivery | Due | Contents |
+| --- | --- | --- |
+| 0 | Sat 9 AM | Rough wireframes for screens 1–3, shared in team chat so devs can match the layout |
+| 1 | Sat 1 PM | Design tokens as Figma variables (colors, type, spacing, radius), and final screens 1–3 |
+| 2 | Sat 6 PM | Screens 4–10, plus empty, loading, and error states |
+| Freeze | Sat midnight | Only fixes after this |
+
+### Notes for the designer
+
+- **Older users:** body text at least 18 pt on mobile, tap targets at least 44 pt, high contrast, one main action per screen.
+- **Two languages:** check every mobile screen with Spanish text, which usually runs longer than English. Leave room in buttons and headers.
+- **Safety:** "Not for emergencies, call 911" appears on the patient home and the visit summary.
+- **Figma sponsor track:** the hacker guide lists a Figma track (Amazon gift cards plus a session with Figma's early-career recruiting team) with a criteria doc, and Figma runs a workshop. The designer should read the criteria early; this project can enter it.
+
 ## Build plan
 
-The phone-call-to-timeline spine must work by noon Saturday. Everything after it is features hung on that spine.
+Dev A builds the voice pipeline, Dev B builds data and screens, and the designer delivers in two batches. The call-to-chart spine must work on production by the noon merge.
 
-&#91;embedded content: Build phases · 6 phases, 3 gates\]
+&#91;embedded content: Build plan · 3 people, 6 time blocks, 4 checkpoints\]
 
-If the spine slips past noon, cut P1 items, not P0. The hacker guide recommends a first Devpost draft on Saturday night.
+If the spine slips past noon, cut P1 items, never P0. At each merge, both devs merge to `main`, one runs `npx convex deploy`, and the team runs the demo path once on production.
 
-### Phase 0: Setup (Sat 3–5 AM)
+### Contract + setup (Sat 3–5 AM)
 
-- [ ] Cartesia: API key, provision 1 phone number, create `checkin-en`, `checkin-es`, `explainer-en`, `explainer-es` in the playground, and test one call from the playground
-- [ ] Elastic Cloud deployment and API key; create both indices from the Data model section
-- [ ] Convex project (`npx convex dev`); set all environment variables
-- [ ] Anthropic API key
-- [ ] Repo scaffold with `SPEC.md` and `CLAUDE.md`
-
-```text
-Prompt: Read SPEC.md. Scaffold the monorepo from the Repo layout section: Convex at the root,
-an Expo Router app in /apps/mobile, a Vite React TS app in /apps/doctor. Add the full Convex
-schema from the Data model section. Both apps connect to Convex with a hardcoded demo patient.
-Don't build features yet.
-```
-
-### Phase 1: Spine (Sat 5 AM–12 PM)
-
-- [ ] `startCheckinCall` action: builds the dynamic variables from the latest check-ins, calls `POST /agents/calls`, inserts the conversation
-- [ ] Cron job every 5 minutes that calls `startCheckinCall` for due patients; a `triggerNow` mutation for the button
-- [ ] Polling action: Get Call until ended → transcript → Claude `record_checkin` → mutations → Elastic index
-- [ ] HTTP endpoints: `/cartesia/red-flag`, `/cartesia/add-question` with the shared-secret check
-- [ ] Seed script: 1 patient (Spanish), 1 appointment 2 days out, 6 days of check-ins for dizziness and knee pain
+- [ ] Dev A: Claude Code writes the contract (Team workflow, step 1) and pushes it to `main` by 4:30 AM
+- [ ] Dev A: Cartesia API key, provision 1 number, create the 4 agents, test one call from the playground
+- [ ] Dev B: Elastic Cloud deployment and API key, accept the Convex team invite, Anthropic key; set project default environment variables
+- [ ] Dev B: review the contract stubs, then run `npx convex dev` on your own dev deployment
+- [ ] Designer: read the Functional spec and the screen inventory
 
 ```text
-Prompt: Read SPEC.md sections Key decisions, Data model, Voice agent design. Implement Phase 1:
-the outbound check-in call, the cron job, post-call processing with Claude tool use (record_checkin),
-indexing into the Elastic checkins index, the red-flag and add-question HTTP endpoints, and the seed
-script. Write a test command that starts a call to DEMO_PHONE and logs each pipeline stage.
+Dev A prompt: Read SPEC.md, especially Team workflow and Data model. Write the contract:
+the npm-workspace scaffold, the full schema, every file in the ownership table with stubbed
+exports (real validators, fake returns), scripts/seed.ts, and CLAUDE.md with the ownership
+table and rules. Don't implement features.
 ```
 
-### Phase 2: Screens (Sat 12–6 PM)
+### Track A: voice + AI pipeline (Dev A)
 
-- [ ] Doctor: patient list, timeline chart (Elastic aggregation through a Convex action), history card, quotes, question list, alerts
-- [ ] Patient app: onboarding/profile with consent, "Call me now", question queue, English/Spanish strings
-- [ ] Cross-language search box (C6)
+- [ ] **5 AM–12 PM, the spine:** `startCheckinCall`, the cron job, `triggerNow`, Get Call polling, Claude `record_checkin` extraction, mutations, a call to `internal.elastic.indexCheckin`, and the red-flag and add-question webhooks
+- [ ] **12–6 PM:** visit processing: upload, batch transcription, Claude cleanup and speaker labels, summaries in both languages, `indexVisitChunks`; the `/cartesia/search-visit` webhook; explainer agents
+- [ ] **6 PM–12 AM:** teach-back (E3), question coverage (D4), unaddressed concerns (D5), `getAccessToken`
+- [ ] **12–6 AM:** in-app voice (B4): dev build, `react-native-audio-api`, WebSocket session in `apps/mobile/src/voice`
 
 ```text
-Prompt: Implement Phase 2 from SPEC.md: features A1–A3, B3, B6, C1–C5, C8, and C6.
-The timeline uses the Elastic date_histogram query from the Data model section, served by a Convex action.
-Use Recharts on the doctor app. All patient-facing strings in en.json and es.json.
+Track A prompt: I am Track A. Read SPEC.md: Key decisions, Data model, Voice agent design,
+Team workflow. Implement the check-in pipeline: startCheckinCall, the cron job, triggerNow,
+post-call polling, Claude tool-use extraction (record_checkin), the mutations, and the red-flag
+and add-question HTTP endpoints. Call internal.elastic.indexCheckin as stubbed; don't edit
+Track B files. Add a script that calls DEMO_PHONE and logs each pipeline stage.
 ```
 
-### Phase 3: Visit loop (Sat 6 PM–12 AM)
+### Track B: data + apps (Dev B)
 
-- [ ] Record the scripted visit audio (English doctor, Spanish patient)
-- [ ] Upload → batch transcription → Claude cleanup and speaker labels → summaries in English and Spanish → `visit_chunks` index
-- [ ] Patient summary screen (E1); explainer agent with the `/cartesia/search-visit` endpoint (E2)
-- [ ] Mark the appointment completed and start the next cycle (E4 data model)
-- [ ] Devpost draft submitted
+- [ ] **5 AM–12 PM:** real `elastic.ts` (index, timeline aggregation, search, `searchVisit`); app queries and mutations; the unstyled doctor dashboard (C1–C5, C8) on seed data
+- [ ] **12–6 PM:** the shared component set and `theme.ts`; unstyled patient app (A1–A3, B3 button, B6, E1); search (C6)
+- [ ] **6 PM–12 AM:** apply the designs (Design integration); the doctor visit view (D6)
+- [ ] **12–6 AM:** empty and loading states, Spanish review by a fluent speaker, P1 screens
 
 ```text
-Prompt: Implement Phase 3 from SPEC.md: D1–D3, E1, E2, and the E4 data changes.
-The explainer agent's search_visit tool calls POST /cartesia/search-visit, which runs the
-semantic query on visit_chunks and returns the top 3 passages in both languages.
+Track B prompt: I am Track B. Read SPEC.md: Data model, Functional spec, Team workflow,
+Design integration. Implement elastic.ts against the index mappings (timeline uses the
+date_histogram query), then the doctor dashboard (C1–C5, C8) in apps/doctor using only the
+shared components and theme.ts. Use seed data. Don't edit Track A files.
 ```
 
-### Phase 4: Stretch (Sun 12–6 AM)
+```text
+Design prompt (Track B, after delivery 1): Using the Figma MCP server, read the design
+variables and copy them into theme.ts for both apps. Restyle the shared components to
+match. Then rebuild screens 1–3 from the screen inventory to match their Figma frames.
+Keep all data wiring unchanged.
+```
 
-Pick from the top of this list down, in order.
-
-- [ ] Teach-back (E3): prompt change only, cheap
-- [ ] Question coverage and unaddressed concerns (D4, D5)
-- [ ] In-app voice (B4): dev build, `react-native-audio-api`, Cartesia access token from Convex, WebSocket session
-- [ ] Polish: loading states, empty states, Spanish text review by a fluent speaker
-
-### Phase 5: Ship (Sun 6–9 AM)
+### Ship (Sun 6–9 AM, whole team)
 
 - [ ] Rehearse the demo script 3 times with a real call
 - [ ] Record a backup demo video in case the live call fails
@@ -514,6 +610,7 @@ The demo runs in two minutes and opens with the phone ringing. Six days of check
 | Anthropic | Named community; Claude extracts, translates, summarizes; known failure points (hallucinated doses) handled by grounding and red flags | Named community, real problem, it works, thoughtful use of Claude |
 | Microsoft: Built for the Real World | Healthcare agent with a path to production (EHR, BAA vendors, human interpreters) | Customer understanding, measurable usefulness, path to production, responsible design, end to end |
 | Cal Hacks Best People-First Hack | The whole project | — |
+| Figma | Designer's Figma file, built into the app through the Figma MCP server | Criteria are in the doc linked from the hacker guide; the designer reads them first |
 
 Check Devpost for a limit on how many tracks one project can enter.
 
@@ -527,6 +624,8 @@ Check Devpost for a limit on how many tracks one project can enter.
 - [ ] Whose US phone number receives the demo calls?
 - [ ] Elastic Cloud trial or the sponsor's provided cluster? Does `semantic_text` work out of the box there?
 - [ ] Who records the scripted visit audio (doctor in English, patient in Spanish)?
+- [ ] Does the designer have a Figma Dev or Full seat (needed for the Figma MCP server)?
+- [ ] Is the contract merged to `main` before either track starts?
 
 ### Sources
 

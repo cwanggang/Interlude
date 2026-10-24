@@ -1,0 +1,1 @@
+Read SPEC.md before every task. Build only the phase you are asked for. Ask before changing the data model or the stack.
