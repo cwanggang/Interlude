@@ -10,6 +10,7 @@ const appointmentDoc = v.object({
   doctorName: v.string(),
   scheduledAt: v.number(),
   status: v.union(v.literal("upcoming"), v.literal("completed")),
+  clinicName: v.optional(v.string()), // Schema v2
 });
 
 /** All of a patient's appointments, oldest first. */

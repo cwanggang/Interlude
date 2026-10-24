@@ -12,6 +12,7 @@ const alertDoc = v.object({
   quote: v.string(),
   createdAt: v.number(),
   acknowledged: v.boolean(),
+  quoteEnglish: v.optional(v.string()), // Schema v2, filled by Track A after the webhook
 });
 
 /** C8 alerts panel for one patient, newest first. */
