@@ -1,10 +1,10 @@
 // Home (G1–G6). Top to bottom: the dynamic tile (cycle strip and countdown, or the call state),
 // "Call me now" with the next call time, today's medicines, the top instructions, and the
 // safety line. Before the first visit, a question preview and an empty state replace medicines.
-import { useQuery } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { Redirect, router } from 'expo-router';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { api } from '../../../../../convex/_generated/api';
 import type { Id } from '../../../../../convex/_generated/dataModel';
@@ -43,7 +43,7 @@ export default function Home() {
 
   return (
     <Screen footer={<Text variant="muted">{s.disclaimer}</Text>}>
-      <ScreenTitle title={s.hello(patient.name.split(' ')[0], new Date(now).getHours())} />
+      <ScreenTitle title={s.hello(patient.name.split(' ')[0], new Date(now).getHours())} right={<Bell patientId={patient._id} now={now} s={s} />} />
 
       {cycle && schedule && <Tile cycle={cycle} schedule={schedule} now={now} language={language} s={s} />}
 
@@ -51,7 +51,7 @@ export default function Home() {
 
       {released === undefined ? null : summary ? (
         <>
-          <Medicines summary={summary} s={s} />
+          <Medicines summary={summary} patientId={patient._id} timezone={patient.timezone} now={now} s={s} />
           <Instructions items={summary.instructions ?? []} s={s} />
         </>
       ) : (
@@ -147,10 +147,16 @@ function nextCallHint(nextCallAt: number | null, now: number, language: Language
   return s.nextCall(day, formatTime(nextCallAt, language));
 }
 
-/** G3: today's doses from the latest released summary. The "Taken" button is block B6 (P1). */
-function Medicines({ summary, s }: { summary: VisitSummary; s: Strings }) {
+/** G3 / G4: today's doses from the latest released summary, each with a "Taken" toggle. */
+function Medicines({ summary, patientId, timezone, now, s }: { summary: VisitSummary; patientId: Id<'patients'>; timezone: string; now: number; s: Strings }) {
+  const events = useQuery(api.medications.week, { patientId, now, days: 1 });
+  const markTaken = useMutation(api.medications.markTaken);
   const doses = todaysDoses(summary);
   if (doses.length === 0) return null;
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date(now));
+  const taken = new Set(
+    (events ?? []).filter((e) => e.date === today && e.action === 'taken' && e.slot).map((e) => `${e.medication}-${e.slot}`),
+  );
   return (
     <Card title={s.todayMedications}>
       {doses.map((d) => (
@@ -158,6 +164,15 @@ function Medicines({ summary, s }: { summary: VisitSummary; s: Strings }) {
           key={`${d.key}-${d.slot}`}
           title={<Text variant="heading">{`${d.slot ? `${SLOT_ICON[d.slot]} ` : ''}${d.name} ${d.dose}`}</Text>}
           subtitle={d.slot ? s.slots[d.slot] : d.schedule}
+          trailing={
+            d.slot ? (
+              <Button
+                label={taken.has(`${d.key}-${d.slot}`) ? `✓ ${s.taken}` : s.markTaken}
+                variant={taken.has(`${d.key}-${d.slot}`) ? 'primary' : 'secondary'}
+                onPress={() => void markTaken({ patientId, medication: d.key, slot: d.slot!, taken: !taken.has(`${d.key}-${d.slot}`) })}
+              />
+            ) : undefined
+          }
         />
       ))}
       <Button label={s.seeAllMedications} variant="secondary" onPress={() => router.push('/visit')} />
@@ -195,5 +210,22 @@ function BeforeFirstVisit({ appointmentId, doctor, s }: { appointmentId?: Id<'ap
         <Text variant="muted">{s.emptyBeforeVisit}</Text>
       </Card>
     </>
+  );
+}
+
+/** G15: the bell in the Home header; the count is what happened in the last day. */
+function Bell({ patientId, now, s }: { patientId: Id<'patients'>; now: number; s: Strings }) {
+  const items = useQuery(api.notifications.list, { patientId, now });
+  const fresh = items?.filter((n) => now - n.at < 24 * 60 * 60_000).length ?? 0;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={s.notificationsLabel(fresh)}
+      onPress={() => router.push('/notifications')}
+      style={{ minWidth: theme.minTap, minHeight: theme.minTap, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: theme.space.xs, paddingHorizontal: theme.space.md }}
+    >
+      <Text variant="heading">🔔</Text>
+      {fresh > 0 && <Badge tone="danger" label={String(fresh)} />}
+    </Pressable>
   );
 }

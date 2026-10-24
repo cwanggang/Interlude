@@ -32,6 +32,8 @@ const strings = {
     seeAllMedications: 'See all medicines',
     slots: { morning: 'Morning', midday: 'Midday', evening: 'Evening', bedtime: 'Bedtime' } as Record<string, string>,
     seeAll: 'See all',
+    markTaken: 'Taken?',
+    taken: 'Taken',
     questionsPreview: (n: number, doctor: string) =>
       n === 0 ? `No questions for ${doctor} yet` : `You have ${n} question${n === 1 ? '' : 's'} for ${doctor}`,
     emptyBeforeVisit: 'Your medicines and instructions will appear here after your visit.',
@@ -118,6 +120,40 @@ const strings = {
     prototypeNotice: 'Prototype for demonstration only. Not medical advice. Not for emergencies: call 911.',
     consentOffConfirm: 'Turning this off stops your daily calls.',
     turnOff: 'Turn off',
+    // my health
+    tabHealth: 'My health',
+    sinceLastVisit: 'Since my visit',
+    lastDays: (n: number) => `${n} days`,
+    healthSummary: (checkins: number, top: { name: string; days: number }[], taken: number, missed: number) =>
+      [
+        `You had ${checkins} check-in${checkins === 1 ? '' : 's'}.`,
+        top.length ? `You mentioned ${top.map((t) => `${t.name} on ${t.days} day${t.days === 1 ? '' : 's'}`).join(' and ')}.` : '',
+        taken || missed ? `You reported taking your medicine ${taken} time${taken === 1 ? '' : 's'} and missing it ${missed} time${missed === 1 ? '' : 's'}.` : '',
+      ].filter(Boolean).join(' '),
+    trend: { worse: 'Worse ↑', better: 'Better ↓', same: 'Same →' } as Record<string, string>,
+    reportedRange: (days: number, first: string, last: string) => `Mentioned on ${days} day${days === 1 ? '' : 's'}, ${first} to ${last}.`,
+    chartLabel: (name: string, points: string) => `${name}, severity by day: ${points}`,
+    visitMarker: 'Visit',
+    doctorWillSee: 'What your doctor will see',
+    detailNames: { onset: 'When it started', timing: 'What time of day', relieving: 'What helps' } as Record<string, string>,
+    notReportedYet: 'not reported yet',
+    reportedYes: 'reported',
+    showPastSymptoms: 'Show past symptoms',
+    hidePastSymptoms: 'Hide past symptoms',
+    medicationWeek: 'Medicines this week',
+    medicationLegend: '✓ taken · ✗ missed · – not reported',
+    visitHistory: 'Visit history',
+    questionsOutcome: (answered: number, carried: number) => `${answered} questions answered, ${carried} moved to the next visit`,
+    noHealthData: 'No check-ins in this period yet.',
+    // notifications
+    notificationsTitle: 'Notifications',
+    noNotifications: 'Nothing new.',
+    notificationsLabel: (n: number) => (n ? `Notifications, ${n} new` : 'Notifications'),
+    notificationText: {
+      summary_ready: 'Your visit summary is ready',
+      missed_call: 'You missed a check-in call',
+      question_captured: 'We saved a question from your call',
+    } as Record<string, string>,
   },
   es: {
     loading: 'Cargando…',
@@ -147,6 +183,8 @@ const strings = {
     seeAllMedications: 'Ver todas las medicinas',
     slots: { morning: 'Mañana', midday: 'Mediodía', evening: 'Noche', bedtime: 'Al acostarse' } as Record<string, string>,
     seeAll: 'Ver todo',
+    markTaken: '¿La tomó?',
+    taken: 'Tomada',
     questionsPreview: (n: number, doctor: string) =>
       n === 0 ? `Todavía no tiene preguntas para ${doctor}` : `Tiene ${n} pregunta${n === 1 ? '' : 's'} para ${doctor}`,
     emptyBeforeVisit: 'Sus medicinas e instrucciones aparecerán aquí después de su cita.',
@@ -226,6 +264,38 @@ const strings = {
     prototypeNotice: 'Prototipo solo para demostración. No es consejo médico. No es para emergencias: llame al 911.',
     consentOffConfirm: 'Si lo apaga, ya no recibirá llamadas diarias.',
     turnOff: 'Apagar',
+    tabHealth: 'Mi salud',
+    sinceLastVisit: 'Desde mi cita',
+    lastDays: (n: number) => `${n} días`,
+    healthSummary: (checkins: number, top: { name: string; days: number }[], taken: number, missed: number) =>
+      [
+        `Tuvo ${checkins} llamada${checkins === 1 ? '' : 's'}.`,
+        top.length ? `Mencionó ${top.map((t) => `${t.name} ${t.days} día${t.days === 1 ? '' : 's'}`).join(' y ')}.` : '',
+        taken || missed ? `Dijo que tomó su medicina ${taken} ${taken === 1 ? 'vez' : 'veces'} y que no la tomó ${missed} ${missed === 1 ? 'vez' : 'veces'}.` : '',
+      ].filter(Boolean).join(' '),
+    trend: { worse: 'Peor ↑', better: 'Mejor ↓', same: 'Igual →' } as Record<string, string>,
+    reportedRange: (days: number, first: string, last: string) => `Lo mencionó ${days} día${days === 1 ? '' : 's'}, del ${first} al ${last}.`,
+    chartLabel: (name: string, points: string) => `${name}, intensidad por día: ${points}`,
+    visitMarker: 'Cita',
+    doctorWillSee: 'Lo que verá su doctor',
+    detailNames: { onset: 'Cuándo empezó', timing: 'A qué hora del día', relieving: 'Qué le ayuda' } as Record<string, string>,
+    notReportedYet: 'todavía no lo ha dicho',
+    reportedYes: 'ya lo dijo',
+    showPastSymptoms: 'Ver síntomas anteriores',
+    hidePastSymptoms: 'Ocultar síntomas anteriores',
+    medicationWeek: 'Medicinas esta semana',
+    medicationLegend: '✓ tomada · ✗ no tomada · – sin dato',
+    visitHistory: 'Historial de citas',
+    questionsOutcome: (answered: number, carried: number) => `${answered} preguntas contestadas, ${carried} pasan a la próxima cita`,
+    noHealthData: 'Todavía no hay llamadas en este periodo.',
+    notificationsTitle: 'Notificaciones',
+    noNotifications: 'No hay nada nuevo.',
+    notificationsLabel: (n: number) => (n ? `Notificaciones, ${n} nuevas` : 'Notificaciones'),
+    notificationText: {
+      summary_ready: 'El resumen de su cita está listo',
+      missed_call: 'No contestó una llamada',
+      question_captured: 'Guardamos una pregunta de su llamada',
+    } as Record<string, string>,
   },
 } satisfies Record<Language, unknown>;
 
@@ -257,4 +327,10 @@ export function formatDay(day: string, language: Language): string {
 /** "6:30 p. m." / "6:30 PM" in the device's time zone. */
 export function formatTime(ms: number, language: Language): string {
   return new Date(ms).toLocaleTimeString(language === 'es' ? 'es-US' : 'en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+/** "2026-10-14" → "14 oct" / "Oct 14". */
+export function formatShortDay(day: string, language: Language): string {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(language === 'es' ? 'es-US' : 'en-US', { month: 'short', day: 'numeric' });
 }

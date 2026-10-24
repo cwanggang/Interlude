@@ -1,4 +1,4 @@
-// Patient tabs: Home, My Visit, Questions, Settings. Labels follow the patient's language.
+// Patient tabs: Home, My Visit, Questions, My Health, Settings. Labels follow the patient's language.
 import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
 
@@ -28,6 +28,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="index" options={{ tabBarLabel: s.tabHome, tabBarIcon: icon('🏠') }} />
       <Tabs.Screen name="visit" options={{ tabBarLabel: s.tabVisit, tabBarIcon: icon('📋') }} />
       <Tabs.Screen name="questions" options={{ tabBarLabel: s.tabQuestions, tabBarIcon: icon('❓') }} />
+      <Tabs.Screen name="health" options={{ tabBarLabel: s.tabHealth, tabBarIcon: icon('📈') }} />
       <Tabs.Screen name="settings" options={{ tabBarLabel: s.tabSettings, tabBarIcon: icon('⚙️') }} />
     </Tabs>
   );
