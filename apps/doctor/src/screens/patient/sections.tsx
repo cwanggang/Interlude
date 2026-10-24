@@ -150,7 +150,7 @@ export function Brief({ patientId, appointmentId, checkinLine, onShowSources }: 
 /** C4 / H9: the side column with the quotes for the selected day or brief line. */
 export function QuotesColumn({ panel, onClose }: { panel: QuotePanel | null; onClose: () => void }) {
   return (
-    <section style={{ position: 'sticky', top: 120, background: theme.color.surface, border: `1.5px solid ${theme.color.primary}`, borderRadius: theme.radius.md, padding: 24, display: 'grid', gap: 14, alignContent: 'start' }}>
+    <section style={{ background: theme.color.surface, border: `1.5px solid ${theme.color.primary}`, borderRadius: theme.radius.md, padding: 24, display: 'grid', gap: 14, alignContent: 'start' }}>
       {panel ? (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
