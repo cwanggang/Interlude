@@ -16,6 +16,7 @@ import type * as cartesia from "../cartesia.js";
 import type * as chat from "../chat.js";
 import type * as claude from "../claude.js";
 import type * as crons from "../crons.js";
+import type * as dashboard from "../dashboard.js";
 import type * as elastic from "../elastic.js";
 import type * as http from "../http.js";
 import type * as lib_time from "../lib/time.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   claude: typeof claude;
   crons: typeof crons;
+  dashboard: typeof dashboard;
   elastic: typeof elastic;
   http: typeof http;
   "lib/time": typeof lib_time;
