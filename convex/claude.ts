@@ -6,6 +6,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { transcribeFile, type Language } from "./cartesia";
 
 export const MODEL = "claude-sonnet-5-5";
 
@@ -271,11 +272,19 @@ const turnsSchema = {
 export async function cleanVisitTranscript(
   passes: Record<string, string>,
   patientLanguage: string,
+  liveTurns: { speaker: string; original: string }[] = [],
 ): Promise<VisitTurn[]> {
   const patientLang = languageName(patientLanguage);
-  const raw = Object.entries(passes)
+  let raw = Object.entries(passes)
     .map(([lang, text]) => `=== Pass transcribed as ${languageName(lang)} ===\n${text}`)
     .join("\n\n");
+  // 6.5e: the live interpreter's turns, attached by the doctor. A hint for turn breaks and
+  // speakers only; the speaker is whichever card the doctor had selected, so it can be wrong.
+  if (liveTurns.length) {
+    raw +=
+      `\n\n=== Live interpreter turns (speaker as selected on screen; may be mislabeled) ===\n` +
+      liveTurns.map((t) => `${t.speaker}: ${t.original}`).join("\n");
+  }
   const result = await structured<{
     turns: { speaker: string; text_english: string; text_patient_lang: string }[];
   }>({
@@ -288,7 +297,8 @@ Rules:
 - Split the conversation into turns and label each speaker: doctor, patient, interpreter, or other. Infer speakers from content (the doctor examines, prescribes, explains; the patient describes symptoms).
 - Clean up filler words, false starts and obvious recognition errors, but never change medical content. Keep every medication name, dose, number, and instruction exactly as spoken.
 - text_english is the turn in English; text_patient_lang is the turn in ${patientLang}. Translate whichever one wasn't spoken. If the patient language is English, both fields are the same.
-- Do not add, drop, or summarize anything that was said.`,
+- Do not add, drop, or summarize anything that was said.
+- If live interpreter turns are given, use them to help find turn breaks and speakers. The raw passes are the source for the words, and the content outranks the live speaker label.`,
     user: raw,
     schema: turnsSchema,
   });
@@ -297,6 +307,78 @@ Rules:
     textEnglish: t.text_english,
     textPatientLang: t.text_patient_lang,
   }));
+}
+
+export type LiveSpeaker = "doctor" | "patient";
+
+const liveTurnSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["language", "speaker", "sure"],
+  properties: {
+    language: { type: "string", enum: ["en", "es"], description: "the language actually spoken" },
+    speaker: { type: "string", enum: ["doctor", "patient"] },
+    sure: { type: "boolean", description: "false if the speaker could be either person" },
+  },
+};
+
+/**
+ * Live visit (6.5b–d): transcribes one spoken turn and works out who said it, so the doctor
+ * does not have to switch the speaker card by hand. When the two people speak different
+ * languages, the clip is transcribed in both and the pass that matches the speech wins, which
+ * identifies the speaker; Claude also checks the content (the doctor examines and prescribes,
+ * the patient describes symptoms). `selected` is the card the doctor has selected; it's kept
+ * when the clip can't tell. Track B's interpreter.translateTurn calls this.
+ */
+export async function transcribeLiveTurn(args: {
+  audio: Blob;
+  languages: Record<LiveSpeaker, Language>;
+  selected: LiveSpeaker;
+  recent?: { speaker: LiveSpeaker; text: string }[];
+}): Promise<{ speaker: LiveSpeaker; language: Language; text: string; detected: boolean }> {
+  const { audio, languages, selected } = args;
+  const codes = [...new Set([languages.doctor, languages.patient])];
+  const passes = await Promise.all(codes.map((l) => transcribeFile(audio, l)));
+  const texts = Object.fromEntries(codes.map((l, i) => [l, passes[i].text.trim()])) as Partial<
+    Record<Language, string>
+  >;
+  const fallback = { speaker: selected, language: languages[selected], detected: false };
+  const textFor = (l: Language) => texts[l] ?? "";
+  if (codes.every((l) => !textFor(l))) return { ...fallback, text: "" };
+
+  const raw = codes
+    .map((l) => `=== Transcribed as ${languageName(l)} ===\n${textFor(l) || "(nothing)"}`)
+    .join("\n\n");
+  const recent = (args.recent ?? []).slice(-4).map((t) => `${t.speaker}: ${t.text}`).join("\n");
+  let result: { language: Language; speaker: LiveSpeaker; sure: boolean };
+  try {
+    result = await structured({
+      effort: "low",
+      system: `One spoken turn from a doctor visit, cut on a pause. The doctor speaks ${languageName(languages.doctor)}; the patient speaks ${languageName(languages.patient)}.
+${codes.length > 1 ? "The same audio was transcribed once per language. Speech-to-text run in the wrong language produces garbled or translated-sounding text; pick the language whose pass reads as natural, coherent speech. That language tells you the speaker.\n" : ""}Then check the content: the doctor asks, examines, explains and prescribes; the patient describes symptoms and answers. The person selected on screen is ${selected}; keep it unless the turn clearly belongs to the other person. Set sure to false when it could be either.`,
+      user: (recent ? `Recent turns:\n${recent}\n\n` : "") + raw,
+      schema: liveTurnSchema,
+    });
+  } catch (error) {
+    console.error("[claude] transcribeLiveTurn: speaker check failed:", error);
+    return { ...fallback, text: textFor(fallback.language) };
+  }
+  const language = codes.includes(result.language) ? result.language : fallback.language;
+  // Different languages: the spoken language decides. Same language: only content can.
+  const speaker =
+    languages.doctor !== languages.patient
+      ? language === languages.doctor
+        ? "doctor"
+        : "patient"
+      : result.sure
+        ? result.speaker
+        : selected;
+  return {
+    speaker,
+    language,
+    text: textFor(language),
+    detected: languages.doctor !== languages.patient || result.sure,
+  };
 }
 
 const sourcedText = {

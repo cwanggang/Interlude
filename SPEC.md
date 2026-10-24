@@ -411,7 +411,18 @@ visits: {
     symptom: v.string(), symptomOriginal: v.string(),
     lastDate: v.string(), lastSeverity: v.optional(v.number()),
   }))),
+  consentId: v.optional(v.id("visitConsents")),   // 6.5a, who agreed to the recording
+  liveTranscript: v.optional(v.array(liveTurn)),  // 6.5e "Attach the live translated transcript"
 },
+// liveTurn = { speaker: "doctor" | "patient", at: number (ms from start), original: string,
+//              translated: string }. Only turns from speakers who agreed to be recorded are kept.
+
+visitConsents: defineTable({                      // 6.5a, append-only: one row per confirmed dialog
+  appointmentId: v.id("appointments"), patientId: v.id("patients"), doctorName: v.string(),
+  recordDoctor: v.boolean(), recordPatient: v.boolean(),
+  translate: v.boolean(),                         // live translation only; covers saving nothing
+  givenAt: v.number(),
+}).index("by_appointment", ["appointmentId"]),
 
 briefs: {
   ...,
@@ -451,7 +462,9 @@ glucoseReadings: defineTable({                    // decision pending; P1 doctor
 }).index("by_patient_date", ["patientId", "date"]),
 ```
 
-Who writes what: Track A writes `visitTasks`, `chatMessages`, `glucoseReadings`, `alerts.quoteEnglish`, and the new `conversations` and `visits` fields; Track B owns every read and every typed edit of them (the same rule as `alerts` and `questions`). Track B writes app `medicationEvents` (`source: "app"`) and the new `patients` fields.
+Who writes what: Track A writes `visitTasks`, `chatMessages`, `glucoseReadings`, `alerts.quoteEnglish`, and the new `conversations` and `visits` fields; Track B owns every read and every typed edit of them (the same rule as `alerts` and `questions`). Track B writes app `medicationEvents` (`source: "app"`) and the new `patients` fields. `visitConsents` rows are written only through Track A's `api.visits.recordConsent`.
+
+**Live visit consent (6.5a–e).** The doctor web calls `api.visits.recordConsent` when the consent dialog is confirmed (both for a live visit and for "Upload a recording instead"), then passes the `consentId`, plus the live turns if the 6.5e box is ticked, to `api.visits.create`. If only one person agreed to be recorded, the server drops the other person's live turns, drops their turns from the processed transcript (speakers are labelled from content, not from the card the doctor tapped), and deletes the audio once it's transcribed. Each live turn goes through `transcribeLiveTurn` in `convex/claude.ts`, which identifies the speaker so the app can switch the speaker card automatically.
 
 ### Elastic indices
 

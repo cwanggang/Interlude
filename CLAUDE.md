@@ -24,6 +24,8 @@ Do not change the args or return validators of these without both devs agreeing.
 | `api.calls.triggerNow`, `api.calls.getConversation` | A | B's "Call me now" button |
 | `api.calls.getAccessToken` | A | A's voice client |
 | `api.visits.generateUploadUrl`, `api.visits.create`, `api.visits.getByAppointment`, `api.visits.release` | A | B's visit upload, summary and review screens |
+| `api.visits.recordConsent`, `api.visits.consentForAppointment`; `create`'s optional `consentId` and `liveTranscript` | A | B's Start visit dialog (6.5a), Finish visit (6.5e) and visit view |
+| `transcribeLiveTurn` in `convex/claude.ts` (plain helper) | A | B's `interpreter.translateTurn` |
 | `useVoiceSession` in `apps/mobile/src/voice` | A | B's in-app voice screen |
 | `api.calls.callSchedule` (pass `now` rounded to the minute) | A | B's Home tile |
 | `api.visits.listForPatient`, `api.visits.latestReleasedSummary` | A | B's Home, My Visit, My Health, visit button |

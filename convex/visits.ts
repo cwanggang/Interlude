@@ -21,6 +21,7 @@ import {
   type VisitTurn,
 } from "./claude";
 import { DAY_MS, localDate } from "./lib/time";
+import { liveTurn } from "./schema";
 
 /** D5: a symptom reported since the previous visit, with its latest check-in. */
 const unaddressedSymptom = v.object({
@@ -44,7 +45,32 @@ const visitDoc = v.object({
   status: v.string(),
   releasedAt: v.optional(v.number()),
   unaddressedSymptoms: v.optional(v.array(unaddressedSymptom)),
+  consentId: v.optional(v.id("visitConsents")),
+  liveTranscript: v.optional(v.array(liveTurn)),
 });
+
+const consentDoc = v.object({
+  _id: v.id("visitConsents"),
+  _creationTime: v.number(),
+  appointmentId: v.id("appointments"),
+  patientId: v.id("patients"),
+  doctorName: v.string(),
+  recordDoctor: v.boolean(),
+  recordPatient: v.boolean(),
+  translate: v.boolean(),
+  givenAt: v.number(),
+});
+
+/** Speakers whose words may be kept, or null when everyone in the room agreed (or no record). */
+function keptSpeakers(
+  consent: { recordDoctor: boolean; recordPatient: boolean } | null,
+): Set<string> | null {
+  if (!consent || (consent.recordDoctor && consent.recordPatient)) return null;
+  const kept = new Set<string>();
+  if (consent.recordDoctor) kept.add("doctor");
+  if (consent.recordPatient) kept.add("patient");
+  return kept;
+}
 
 const turnValidator = v.object({
   speaker: v.string(),
@@ -98,13 +124,75 @@ export const generateUploadUrl = mutation({
   },
 });
 
-/** D1 step 2: register the uploaded file; processing starts automatically. */
+/** 6.5a: saves who agreed to what, when the doctor confirms the consent dialog. */
+export const recordConsent = mutation({
+  args: {
+    appointmentId: v.id("appointments"),
+    recordDoctor: v.boolean(),
+    recordPatient: v.boolean(),
+    translate: v.boolean(),
+  },
+  returns: v.id("visitConsents"),
+  handler: async (ctx, args): Promise<Id<"visitConsents">> => {
+    const appointment = await ctx.db.get("appointments", args.appointmentId);
+    if (!appointment) throw new Error("Appointment not found");
+    return await ctx.db.insert("visitConsents", {
+      ...args,
+      patientId: appointment.patientId,
+      doctorName: appointment.doctorName,
+      givenAt: Date.now(),
+    });
+  },
+});
+
+/** The latest consent given for an appointment, for the visit view. */
+export const consentForAppointment = query({
+  args: { appointmentId: v.id("appointments") },
+  returns: v.union(v.null(), consentDoc),
+  handler: async (ctx, args): Promise<Infer<typeof consentDoc> | null> => {
+    return await ctx.db
+      .query("visitConsents")
+      .withIndex("by_appointment", (q) => q.eq("appointmentId", args.appointmentId))
+      .order("desc")
+      .first();
+  },
+});
+
+/**
+ * D1 step 2: register the uploaded file; processing starts automatically. `consentId` comes from
+ * recordConsent. `liveTranscript` is 6.5e's "Attach the live translated transcript"; turns from
+ * anyone who did not agree to be recorded are dropped here, and processing drops their speech.
+ */
 export const create = mutation({
-  args: { appointmentId: v.id("appointments"), storageId: v.id("_storage") },
+  args: {
+    appointmentId: v.id("appointments"),
+    storageId: v.id("_storage"),
+    consentId: v.optional(v.id("visitConsents")),
+    liveTranscript: v.optional(v.array(liveTurn)),
+  },
   returns: v.union(v.null(), v.id("visits")),
   handler: async (ctx, args): Promise<Id<"visits"> | null> => {
     const appointment = await ctx.db.get("appointments", args.appointmentId);
     if (!appointment) throw new Error("Appointment not found");
+    const consent = args.consentId ? await ctx.db.get("visitConsents", args.consentId) : null;
+    if (args.consentId) {
+      if (!consent || consent.appointmentId !== args.appointmentId) {
+        throw new Error("Consent not found for this appointment");
+      }
+      if (!consent.recordDoctor && !consent.recordPatient) {
+        throw new Error("Nobody agreed to be recorded");
+      }
+    }
+    const kept = keptSpeakers(consent);
+    const liveTranscript = args.liveTranscript?.filter((t) => !kept || kept.has(t.speaker));
+    const fields = {
+      appointmentId: args.appointmentId,
+      audioStorageId: args.storageId,
+      releasedToPatient: false,
+      status: "uploaded",
+      consentId: args.consentId,
+      liveTranscript: liveTranscript?.length ? liveTranscript : undefined,
+    };
     // One visit per appointment: a new upload replaces the old recording and reprocesses.
     const existing = await ctx.db
       .query("visits")
@@ -115,20 +203,10 @@ export const create = mutation({
       if (existing.audioStorageId && existing.audioStorageId !== args.storageId) {
         await ctx.storage.delete(existing.audioStorageId);
       }
-      await ctx.db.replace("visits", existing._id, {
-        appointmentId: args.appointmentId,
-        audioStorageId: args.storageId,
-        releasedToPatient: false,
-        status: "uploaded",
-      });
+      await ctx.db.replace("visits", existing._id, fields);
       visitId = existing._id;
     } else {
-      visitId = await ctx.db.insert("visits", {
-        appointmentId: args.appointmentId,
-        audioStorageId: args.storageId,
-        releasedToPatient: false,
-        status: "uploaded",
-      });
+      visitId = await ctx.db.insert("visits", fields);
     }
     await ctx.scheduler.runAfter(0, internal.visits.processVisit, { visitId });
     return visitId;
@@ -263,11 +341,24 @@ export const processVisit = internalAction({
 
     let transcript: VisitTurn[];
     try {
-      transcript = await cleanVisitTranscript(passes, language);
+      transcript = await cleanVisitTranscript(passes, language, context.liveTranscript);
     } catch (error) {
       return await fail("transcript cleanup", error);
     }
-    await ctx.runMutation(internal.visits.saveTranscript, { visitId: args.visitId, transcript });
+    // Only one person agreed to be recorded: the app mutes the other by the speaker card, which
+    // the doctor may forget to switch. Drop every turn not from a consenting speaker (labelled
+    // from content), and delete the audio so their voice is not kept.
+    const kept = keptSpeakers(context.consent);
+    if (kept) {
+      const before = transcript.length;
+      transcript = transcript.filter((t) => kept.has(t.speaker));
+      log(`consent: kept ${[...kept].join("+")} turns, dropped ${before - transcript.length}`);
+    }
+    await ctx.runMutation(internal.visits.saveTranscript, {
+      visitId: args.visitId,
+      transcript,
+      deleteAudio: kept !== null,
+    });
     log(`cleaned transcript: ${transcript.length} turns`);
 
     // Index passages for the explainer agent before anything else, so it works as early as possible.
@@ -330,11 +421,14 @@ export const getProcessingContext = internalQuery({
       questions: v.array(v.object({ _id: v.id("questions"), textEnglish: v.string() })),
       priorMedications: v.array(v.string()),
       reportedSymptoms: v.array(unaddressedSymptom),
+      consent: v.union(v.null(), v.object({ recordDoctor: v.boolean(), recordPatient: v.boolean() })),
+      liveTranscript: v.array(v.object({ speaker: v.string(), original: v.string() })),
     }),
   ),
   handler: async (ctx, args) => {
     const visit = await ctx.db.get("visits", args.visitId);
     if (!visit) return null;
+    const consent = visit.consentId ? await ctx.db.get("visitConsents", visit.consentId) : null;
     const appointment = await ctx.db.get("appointments", visit.appointmentId);
     if (!appointment) return null;
     const patient = await ctx.db.get("patients", appointment.patientId);
@@ -387,15 +481,34 @@ export const getProcessingContext = internalQuery({
         lastDate: e.date,
         lastSeverity: e.severity,
       })),
+      consent: consent
+        ? { recordDoctor: consent.recordDoctor, recordPatient: consent.recordPatient }
+        : null,
+      liveTranscript: (visit.liveTranscript ?? []).map((t) => ({
+        speaker: t.speaker,
+        original: t.original,
+      })),
     };
   },
 });
 
 export const saveTranscript = internalMutation({
-  args: { visitId: v.id("visits"), transcript: v.array(turnValidator) },
+  args: {
+    visitId: v.id("visits"),
+    transcript: v.array(turnValidator),
+    deleteAudio: v.optional(v.boolean()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await ctx.db.patch("visits", args.visitId, { transcript: args.transcript, status: "transcribed" });
+    const visit = await ctx.db.get("visits", args.visitId);
+    if (!visit) return null;
+    const dropAudio = args.deleteAudio ? visit.audioStorageId : undefined;
+    if (dropAudio) await ctx.storage.delete(dropAudio);
+    await ctx.db.patch("visits", args.visitId, {
+      transcript: args.transcript,
+      status: "transcribed",
+      ...(dropAudio ? { audioStorageId: undefined } : {}),
+    });
     return null;
   },
 });
@@ -527,7 +640,11 @@ export const setStatus = internalMutation({
  * `npx convex run visits:devCreateFromText '{"rawText":"Doctor: ... Paciente: ..."}'`
  */
 export const devCreateFromText = internalMutation({
-  args: { rawText: v.string(), appointmentId: v.optional(v.id("appointments")) },
+  args: {
+    rawText: v.string(),
+    appointmentId: v.optional(v.id("appointments")),
+    consentId: v.optional(v.id("visitConsents")),
+  },
   returns: v.id("visits"),
   handler: async (ctx, args) => {
     const appointment = args.appointmentId
@@ -538,7 +655,12 @@ export const devCreateFromText = internalMutation({
       .query("visits")
       .withIndex("by_appointment", (q) => q.eq("appointmentId", appointment._id))
       .first();
-    const fields = { appointmentId: appointment._id, releasedToPatient: false, status: "uploaded" };
+    const fields = {
+      appointmentId: appointment._id,
+      releasedToPatient: false,
+      status: "uploaded",
+      consentId: args.consentId,
+    };
     const visitId = existing
       ? (await ctx.db.replace("visits", existing._id, fields), existing._id)
       : await ctx.db.insert("visits", fields);

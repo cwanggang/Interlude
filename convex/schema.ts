@@ -14,6 +14,15 @@ const briefItem = v.object({
   ),
 });
 
+// 6.5e: one turn of the live interpreter, attached to the visit when the doctor ticks the box.
+// `at` is ms from the start of the visit; `original` is in the speaker's language.
+export const liveTurn = v.object({
+  speaker: v.union(v.literal("doctor"), v.literal("patient")),
+  at: v.number(),
+  original: v.string(),
+  translated: v.string(),
+});
+
 export default defineSchema({
   patients: defineTable({
     name: v.string(),
@@ -144,6 +153,21 @@ export default defineSchema({
         }),
       ),
     ), // D5, H12
+    // 6.5a/e
+    consentId: v.optional(v.id("visitConsents")), // who agreed to the recording
+    liveTranscript: v.optional(v.array(liveTurn)), // consenting speakers' turns only
+  }).index("by_appointment", ["appointmentId"]),
+
+  // 6.5a: who agreed to what when the doctor started the visit. Append-only: a new row each
+  // time the dialog is confirmed, so the record shows exactly what was agreed and when.
+  visitConsents: defineTable({
+    appointmentId: v.id("appointments"),
+    patientId: v.id("patients"),
+    doctorName: v.string(),
+    recordDoctor: v.boolean(),
+    recordPatient: v.boolean(),
+    translate: v.boolean(), // live translation on screen; does not cover saving anything
+    givenAt: v.number(),
   }).index("by_appointment", ["appointmentId"]),
 
   // C9 pre-visit brief, written by elastic.generateBrief from the Elastic Workflow's output
