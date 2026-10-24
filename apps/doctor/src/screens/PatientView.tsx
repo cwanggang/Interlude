@@ -11,6 +11,7 @@ import { age, daysFrom, formatCountdown, formatDay, formatTime, isoDay, language
 import { theme } from '../theme'
 import { useNow } from '../useNow'
 import Timeline, { type Selection } from './patient/Timeline'
+import StartVisitFlow from './patient/LiveVisit'
 import VisitView from './patient/VisitView'
 import { visitStage } from './patient/visitStage'
 import { dayPanel, type QuotePanel } from './patient/quotes'
@@ -30,6 +31,7 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
   const [selected, setSelected] = useState<Selection | null>(null)
   const [panel, setPanel] = useState<QuotePanel | null>(null)
   const [showVisit, setShowVisit] = useState(false)
+  const [starting, setStarting] = useState(false)
   const markViewed = useMutation(api.patients.markViewed)
 
   // H6: opening the patient clears the "new since last viewed" dot (once per open, not per update).
@@ -89,11 +91,23 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {appointment && <VisitButtons stage={stage} showVisit={showVisit} onToggle={() => setShowVisit(!showVisit)} />}
+            {appointment && <VisitButtons stage={stage} showVisit={showVisit} onToggle={() => setShowVisit(!showVisit)} onStart={() => setStarting(true)} />}
           </div>
         </div>
       </header>
       <AlertBanner patientId={patientId} />
+      {starting && appointment && (
+        <StartVisitFlow
+          appointmentId={appointment._id}
+          scheduledAt={appointment.scheduledAt}
+          people={{ doctorName: appointment.doctorName, patientName: patient.name, patientLanguage: patient.language }}
+          onClose={() => setStarting(false)}
+          onUploaded={() => {
+            setStarting(false)
+            setShowVisit(true)
+          }}
+        />
+      )}
 
       {showVisit && appointment ? (
         <VisitView
@@ -133,18 +147,20 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
  * Figma 6.4. No visit yet: "Start visit" and "Upload recording" are shown but switched off — the
  * recording flow (6.5) is still being designed. Otherwise the button opens the visit view.
  */
-function VisitButtons({ stage, showVisit, onToggle }: { stage: ReturnType<typeof visitStage>; showVisit: boolean; onToggle: () => void }) {
+function VisitButtons({ stage, showVisit, onToggle, onStart }: { stage: ReturnType<typeof visitStage>; showVisit: boolean; onToggle: () => void; onStart: () => void }) {
   if (stage.kind === 'none') {
+    // Both open the consent dialog (6.5a), which also offers the upload.
     return (
       <>
-        <Button variant="secondary" icon="upload" disabled title="Coming soon: still being designed">Upload recording</Button>
-        <Button icon="mic-white-18" size="lg" style={{ height: 48 }} disabled title="Coming soon: still being designed">Start visit</Button>
+        <Button variant="secondary" icon="upload" onClick={onStart}>Upload recording</Button>
+        <Button icon="mic-white-18" size="lg" style={{ height: 48 }} onClick={onStart}>Start visit</Button>
       </>
     )
   }
   return (
     <>
       {stage.chip && !showVisit && <Chip tone={stage.chip.tone} icon={stage.chip.icon} size={14}>{stage.chip.text}</Chip>}
+      {stage.kind === 'failed' && !showVisit && <Button variant="secondary" icon="mic-ink-18" onClick={onStart}>Record again</Button>}
       <Button variant={showVisit ? 'secondary' : stage.variant} icon={showVisit ? undefined : stage.icon} style={{ height: 48 }} onClick={onToggle}>
         {showVisit ? 'Back to patient' : stage.label}
       </Button>

@@ -1,8 +1,8 @@
 // The visit view (Figma 6.6 processing, 6.7 review, 6.8 release confirm; H10–H13). Processing steps;
 // attention cards (D4 questions answered, D5 symptoms not discussed); the transcript with speakers
 // (D2) beside the summary in English and Spanish (D3); the release bar and confirm (D6). Recording
-// and upload (6.5, D1) are still being designed and are not wired here. Processing is Track A's;
-// this only reads visits and calls the contract.
+// and upload (6.5, D1) live in LiveVisit.tsx. Processing is Track A's; this only reads visits and
+// calls the contract.
 import { useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
@@ -45,7 +45,7 @@ export default function VisitView({ appointmentId, scheduledAt, patientName, pat
   const [highlight, setHighlight] = useState<number | null>(null)
 
   if (visit === undefined) return <Screen><Text variant="muted">Loading…</Text></Screen>
-  if (visit === null) return <Screen><Card><Text variant="muted">No visit recorded yet. Recording and upload are still being designed.</Text></Card></Screen>
+  if (visit === null) return <Screen><Card><Text variant="muted">No visit recorded yet. Use Start visit or Upload recording above.</Text></Card></Screen>
 
   const showTurn = (turn: number | undefined) => {
     if (turn === undefined) return
@@ -101,7 +101,7 @@ function Processing({ visit, scheduledAt }: { visit: Visit; scheduledAt: number 
         <Steps reached={reached} failed={visit.status === 'failed'} />
       </div>
       <Text color={theme.color.textMuted} style={{ font: `400 15px/1.45 ${theme.font.body}` }}>
-        {visit.status === 'failed' ? 'Processing failed. A new recording can be uploaded once upload is available.' : "You can leave this page; we'll fill it in as each step finishes."}
+        {visit.status === 'failed' ? 'Processing failed. Upload the recording again from Start visit.' : "You can leave this page; we'll fill it in as each step finishes."}
       </Text>
     </Card>
   )

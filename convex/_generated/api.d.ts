@@ -20,6 +20,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as elastic from "../elastic.js";
 import type * as health from "../health.js";
 import type * as http from "../http.js";
+import type * as interpreter from "../interpreter.js";
 import type * as lib_time from "../lib/time.js";
 import type * as medications from "../medications.js";
 import type * as notifications from "../notifications.js";
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   elastic: typeof elastic;
   health: typeof health;
   http: typeof http;
+  interpreter: typeof interpreter;
   "lib/time": typeof lib_time;
   medications: typeof medications;
   notifications: typeof notifications;
