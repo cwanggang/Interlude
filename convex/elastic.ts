@@ -75,6 +75,7 @@ const MAPPINGS = {
       speakers: { type: "keyword" },
       text_english: { type: "text", copy_to: "content" },
       text_patient_lang: { type: "text" },
+      text_bilingual: { type: "text", index: false }, // rerank field, as quote_bilingual
       content: { type: "semantic_text", inference_id: EMBEDDING_ID },
     },
   },
@@ -122,6 +123,13 @@ type CheckinSource = {
   quote_english: string;
 };
 
+type VisitChunkSource = {
+  chunk_index: number;
+  speakers: string[];
+  text_english: string;
+  text_patient_lang: string;
+};
+
 function checkinDoc(a: CheckinArgs) {
   return {
     symptom_entry_id: a.symptomEntryId,
@@ -139,6 +147,147 @@ function checkinDoc(a: CheckinArgs) {
 ${a.quoteEnglish}`,
   };
 }
+
+// ---- Agent Builder (C7) ----
+// Every patient-data tool requires ?patient_id or ?appointment_id, so the LLM can't read other
+// patients. Ids carry ELASTIC_INDEX_PREFIX so each deployment has its own tools and agent.
+
+function agentId(): string {
+  return `${process.env.ELASTIC_INDEX_PREFIX ?? ""}patient-record-agent`;
+}
+
+function agentTools() {
+  const prefix = process.env.ELASTIC_INDEX_PREFIX ?? "";
+  return [
+    {
+      id: `${prefix}symptom_trend`,
+      type: "esql",
+      description:
+        "Daily maximum severity (0-10) per symptom for one patient, oldest first. Use for onset, trends, and 'is it getting worse'.",
+      configuration: {
+        query: `FROM ${indexName("checkins")}
+| WHERE patient_id == ?patient_id
+| STATS max_severity = MAX(severity) BY symptom, day = DATE_TRUNC(1 day, date)
+| SORT symptom, day
+| LIMIT 300`,
+        params: { patient_id: { type: "string", description: "The patient ID given in the question" } },
+      },
+    },
+    {
+      id: `${prefix}symptom_quotes`,
+      type: "esql",
+      description:
+        "Every check-in quote for one patient (original Spanish and English), with date, symptom, severity and change. Use to cite evidence, including glucose readings and medications the patient mentioned.",
+      configuration: {
+        query: `FROM ${indexName("checkins")}
+| WHERE patient_id == ?patient_id
+| KEEP date, symptom, severity, change, quote_original, quote_english, conversation_id
+| SORT date ASC
+| LIMIT 200`,
+        params: { patient_id: { type: "string", description: "The patient ID given in the question" } },
+      },
+    },
+    {
+      id: `${prefix}visit_passages`,
+      type: "esql",
+      description:
+        "Transcript passages from the patient's most recent doctor visit, in order. Use for what the doctor said or prescribed.",
+      configuration: {
+        query: `FROM ${indexName("visit_chunks")}
+| WHERE appointment_id == ?appointment_id
+| KEEP chunk_index, speakers, text_english, text_patient_lang
+| SORT chunk_index
+| LIMIT 50`,
+        params: { appointment_id: { type: "string", description: "The appointment ID given in the question" } },
+      },
+    },
+  ];
+}
+
+const AGENT_INSTRUCTIONS = `You answer a doctor's questions about one patient's daily check-in calls and visit records.
+The patient has a metabolic condition (for example type 2 diabetes); quotes may mention glucose readings and medications.
+Always use your tools, passing the patient ID and appointment ID given at the start of the question.
+Answer only from tool results, in English, in two to four sentences. If the records don't contain the answer, say so.
+Never diagnose or give medical advice.
+After the answer, add one line that starts with CITATIONS: followed by a JSON array of the quotes you relied on,
+each {"date": "YYYY-MM-DD", "quote": "<quote_original exactly as returned>"} for check-in quotes,
+or {"quote": "<text_english exactly as returned>"} with no date for visit passages. Use [] if none.`;
+
+type ConverseStep = { type: string; reasoning?: string; tool_id?: string; params?: Record<string, unknown> };
+
+/** One-shot Agent Builder conversation with this deployment's patient-record agent. */
+async function converse(input: string): Promise<{ message: string; steps: ConverseStep[] }> {
+  const res = await kibana("/api/agent_builder/converse", {
+    method: "POST",
+    body: JSON.stringify({ agent_id: agentId(), input }),
+  });
+  if (!res.ok) throw new Error(`Agent Builder converse: ${res.status} ${await res.text()}`);
+  const body = (await res.json()) as { response?: { message?: string }; steps?: ConverseStep[] };
+  return { message: body.response?.message ?? "", steps: body.steps ?? [] };
+}
+
+/** Splits the agent's trailing "CITATIONS: [...]" line (see AGENT_INSTRUCTIONS) from its answer. */
+function splitCitations(message: string): { answer: string; citations: { date?: string; quote: string }[] } {
+  const at = message.lastIndexOf("CITATIONS:");
+  if (at === -1) return { answer: message.trim(), citations: [] };
+  const answer = message.slice(0, at).replace(/\*\*/g, "").trim();
+  try {
+    const parsed = JSON.parse(message.slice(at + "CITATIONS:".length).trim()) as { date?: unknown; quote?: unknown }[];
+    const citations = parsed.flatMap((c) =>
+      typeof c.quote === "string" ? [{ quote: c.quote, date: typeof c.date === "string" ? c.date : undefined }] : [],
+    );
+    return { answer, citations };
+  } catch {
+    return { answer, citations: [] };
+  }
+}
+
+/** Creates or updates this deployment's Agent Builder tools and agent. Run after ensureIndices. */
+export const syncAgent = internalAction({
+  args: {},
+  returns: v.object({ agentId: v.string(), tools: v.array(v.string()) }),
+  handler: async () => {
+    const tools = agentTools();
+    for (const { id, ...tool } of tools) {
+      const existing = await kibana(`/api/agent_builder/tools/${id}`);
+      const { type: _type, ...updatable } = tool;
+      const res = existing.ok
+        ? await kibana(`/api/agent_builder/tools/${id}`, { method: "PUT", body: JSON.stringify(updatable) })
+        : await kibana("/api/agent_builder/tools", { method: "POST", body: JSON.stringify({ id, ...tool }) });
+      if (!res.ok) throw new Error(`syncAgent tool ${id}: ${res.status} ${await res.text()}`);
+    }
+    const agent = {
+      name: "Patient record agent",
+      description: "Answers a doctor's questions about one patient's check-ins and visits, with cited quotes.",
+      configuration: { instructions: AGENT_INSTRUCTIONS, tools: [{ tool_ids: tools.map((t) => t.id) }] },
+    };
+    const id = agentId();
+    const existing = await kibana(`/api/agent_builder/agents/${id}`);
+    const res = existing.ok
+      ? await kibana(`/api/agent_builder/agents/${id}`, { method: "PUT", body: JSON.stringify(agent) })
+      : await kibana("/api/agent_builder/agents", { method: "POST", body: JSON.stringify({ id, ...agent }) });
+    if (!res.ok) throw new Error(`syncAgent agent ${id}: ${res.status} ${await res.text()}`);
+    return { agentId: id, tools: tools.map((t) => t.id) };
+  },
+});
+
+/** Dev helper: raw Kibana API call, e.g. to inspect Agent Builder shapes. Internal only. */
+export const kibanaApi = internalAction({
+  args: { method: v.string(), path: v.string(), body: v.optional(v.any()) },
+  returns: v.any(),
+  handler: async (_ctx, args) => {
+    const res = await kibana(args.path, {
+      method: args.method,
+      body: args.body === undefined ? undefined : JSON.stringify(args.body),
+    });
+    const text = await res.text();
+    try {
+      return { status: res.status, body: JSON.parse(text) };
+    } catch {
+      return { status: res.status, body: text.slice(0, 2000) };
+    }
+  },
+});
 
 /** Setup check: cluster info, inference endpoints (for the Jina IDs), and Kibana reachability. */
 export const diagnose = internalAction({
@@ -254,6 +403,8 @@ export const indexVisitChunks = internalAction({
           speakers: c.speakers,
           text_english: c.textEnglish,
           text_patient_lang: c.textPatientLang,
+          text_bilingual: `${c.textPatientLang}
+${c.textEnglish}`,
         },
       ]),
     });
@@ -269,16 +420,56 @@ export const searchVisit = internalAction({
     query: v.string(),
   },
   returns: v.array(visitPassage),
-  handler: async (_ctx, _args): Promise<Infer<typeof visitPassage>[]> => {
-    return [
-      {
-        chunkIndex: 0,
-        speakers: ["doctor", "interpreter"],
-        textEnglish: "Take the new pill, meclizine 25 mg, once in the morning with food.",
-        textPatientLang: "Tome la pastilla nueva, meclizina de 25 mg, una vez en la mañana con comida.",
-        score: 1,
+  handler: async (_ctx, args): Promise<Infer<typeof visitPassage>[]> => {
+    const query = args.query.trim();
+    if (!query) return [];
+    await ensureOnce();
+    // Runs during a live phone call: log latency. If reranking is too slow, drop it here only.
+    const started = Date.now();
+    const appointmentFilter = { term: { appointment_id: args.appointmentId } };
+    const res = await es().search<VisitChunkSource>({
+      index: indexName("visit_chunks"),
+      size: 3,
+      _source: ["chunk_index", "speakers", "text_english", "text_patient_lang"],
+      retriever: {
+        text_similarity_reranker: {
+          retriever: {
+            rrf: {
+              retrievers: [
+                { standard: { query: { semantic: { field: "content", query } }, filter: appointmentFilter } },
+                {
+                  standard: {
+                    query: { multi_match: { query, fields: ["text_english", "text_patient_lang"] } },
+                    filter: appointmentFilter,
+                  },
+                },
+              ],
+              rank_window_size: 20,
+            },
+          },
+          field: "text_bilingual",
+          inference_id: RERANK_ID,
+          inference_text: query,
+          rank_window_size: 20,
+        },
       },
-    ];
+    });
+    console.log("elastic.searchVisit", args.appointmentId, `${Date.now() - started}ms`, res.hits.hits.length);
+    // No score cutoff: the explainer must always get its best passages, and it says
+    // "ask your clinic" when they don't answer the question.
+    return res.hits.hits.flatMap((h) =>
+      h._source
+        ? [
+            {
+              chunkIndex: h._source.chunk_index,
+              speakers: h._source.speakers,
+              textEnglish: h._source.text_english,
+              textPatientLang: h._source.text_patient_lang,
+              score: h._score ?? 0,
+            },
+          ]
+        : [],
+    );
   },
 });
 
@@ -428,11 +619,20 @@ const recordAnswer = v.object({
 export const askRecord = action({
   args: { patientId: v.id("patients"), question: v.string() },
   returns: recordAnswer,
-  handler: async (_ctx, _args): Promise<Infer<typeof recordAnswer>> => {
+  handler: async (ctx, args): Promise<Infer<typeof recordAnswer>> => {
+    const appointment = await ctx.runQuery(api.appointments.current, { patientId: args.patientId });
+    const { message, steps } = await converse(
+      `Patient ID: ${args.patientId}. Appointment ID: ${appointment?._id ?? "none"}. Question: ${args.question.trim()}`,
+    );
+    const { answer, citations } = splitCitations(message);
     return {
-      answer: "The dizziness started about two weeks before the first check-in and has worsened from 4 to 6.",
-      citations: [{ quote: "Me mareo mucho cuando me levanto de la cama, como que todo da vueltas." }],
-      steps: ["[stub] symptom_trend(patient_id, days=14)"],
+      answer,
+      citations,
+      steps: steps.map((step) =>
+        step.type === "tool_call"
+          ? `Ran ${step.tool_id} for ${Object.keys(step.params ?? {}).join(", ") || "no parameters"}`
+          : (step.reasoning ?? step.type),
+      ),
     };
   },
 });

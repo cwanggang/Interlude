@@ -84,7 +84,7 @@ Why hybrid matters here (use this in the README and pitch): semantic search matc
 
 ## 7. Agent Builder and Workflows
 
-**7.1 Agent: `patient-record-agent`.** Define it as JSON in `/elastic/agent.json` and create it with an `internalAction` (`npx convex run elastic:syncAgent`) that calls the Agent Builder API (`/api/agent_builder/tools`, `/api/agent_builder/agents`) on `KIBANA_URL`. Clicking it together in Kibana is fine for a first pass, but export the config to the repo.
+**7.1 Agent: `patient-record-agent`.** Defined in `convex/elastic.ts` (`agentTools`, `AGENT_INSTRUCTIONS`; the Convex tsconfig doesn't import JSON) and created or updated with `npx convex run elastic:syncAgent`, which calls the Agent Builder API on `KIBANA_URL`. Tool and agent IDs carry `ELASTIC_INDEX_PREFIX`, so `ELASTIC_AGENT_ID` isn't needed.
 
 Instructions (draft):
 
