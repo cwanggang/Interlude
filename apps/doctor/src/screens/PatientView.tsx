@@ -1,6 +1,6 @@
 // Screen 1: doctor patient view (the hero screen). C2–C9 on one page.
-import { useState } from 'react'
-import { useQuery } from 'convex/react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { Badge, Button, Screen, Text } from '../components'
@@ -14,6 +14,13 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
   const appointment = useQuery(api.appointments.current, { patientId })
   const entries = useQuery(api.patients.symptomEntries, { patientId })
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const markViewed = useMutation(api.patients.markViewed)
+
+  // H6: opening the patient clears the "new since last viewed" dot (once per open, not per update).
+  const loaded = !!patient
+  useEffect(() => {
+    if (loaded) void markViewed({ patientId })
+  }, [loaded, patientId, markViewed])
 
   if (patient === null) {
     return (

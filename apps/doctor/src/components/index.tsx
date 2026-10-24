@@ -166,3 +166,48 @@ export function ListItem({ title, subtitle, trailing, onClick }: { title: ReactN
     </div>
   )
 }
+
+/** Top-level tabs (Home, Patients). `badge` shows a count on a tab, e.g. open alerts. */
+export function NavBar<T extends string>({ tabs, active, onSelect }: { tabs: { id: T; label: string; badge?: number }[]; active: T; onSelect: (id: T) => void }) {
+  return (
+    <nav
+      style={{
+        display: 'flex',
+        gap: theme.space.xs,
+        padding: `0 ${theme.space.xl}px`,
+        background: theme.color.surface,
+        borderBottom: `1px solid ${theme.color.border}`,
+        fontFamily: theme.font.family,
+      }}
+    >
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          onClick={() => onSelect(tab.id)}
+          style={{
+            font: 'inherit',
+            fontSize: theme.font.size.md,
+            fontWeight: tab.id === active ? 600 : 400,
+            padding: `${theme.space.md}px ${theme.space.md}px`,
+            border: 'none',
+            borderBottom: `2px solid ${tab.id === active ? theme.color.primary : 'transparent'}`,
+            background: 'none',
+            color: tab.id === active ? theme.color.primary : theme.color.text,
+            cursor: 'pointer',
+            display: 'flex',
+            gap: theme.space.sm,
+            alignItems: 'center',
+          }}
+        >
+          {tab.label}
+          {!!tab.badge && <Badge tone="danger">{tab.badge}</Badge>}
+        </button>
+      ))}
+    </nav>
+  )
+}
+
+/** Small filled circle, e.g. "new since last viewed". */
+export function Dot({ tone = 'primary', title }: { tone?: Tone; title?: string }) {
+  return <span title={title} style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 999, background: badgeColors[tone].bg }} />
+}

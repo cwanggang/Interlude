@@ -39,6 +39,8 @@ const patientListRow = v.object({
     }),
   ),
   openAlerts: v.number(),
+  /** H6: newest processed check-in, for "new since last viewed". */
+  lastCheckinAt: v.union(v.null(), v.number()),
 });
 
 const symptomEntryDoc = v.object({
@@ -88,13 +90,13 @@ const conversationRow = v.object({
   summaryPatientLang: v.optional(v.string()), // v2, G18
 });
 
-/** C1: patient list with next appointment and open alert count. */
+/** C1 / H6: patient list, alerts pinned first, then soonest appointment. */
 export const list = query({
   args: {},
   returns: v.array(patientListRow),
   handler: async (ctx): Promise<Infer<typeof patientListRow>[]> => {
     const patients = await ctx.db.query("patients").take(100);
-    return await Promise.all(
+    const rows = await Promise.all(
       patients.map(async (patient) => {
         const appointments = await ctx.db
           .query("appointments")
@@ -108,15 +110,24 @@ export const list = query({
           .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
           .order("desc")
           .take(100);
+        const conversations = await ctx.db
+          .query("conversations")
+          .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+          .order("desc")
+          .take(30);
+        const lastCheckin = conversations.find((c) => c.mode === "checkin" && c.status === "processed");
         return {
           patient,
           nextAppointment: next
             ? { _id: next._id, doctorName: next.doctorName, scheduledAt: next.scheduledAt }
             : null,
           openAlerts: alerts.filter((a) => !a.acknowledged).length,
+          lastCheckinAt: lastCheckin?.startedAt ?? null,
         };
       }),
     );
+    const soonest = (r: (typeof rows)[number]) => r.nextAppointment?.scheduledAt ?? Infinity;
+    return rows.sort((a, b) => Number(b.openAlerts > 0) - Number(a.openAlerts > 0) || soonest(a) - soonest(b));
   },
 });
 
@@ -163,6 +174,16 @@ export const update = mutation({
       Object.entries(fields).filter(([, value]) => value !== undefined),
     );
     await ctx.db.patch(patientId, changes);
+    return null;
+  },
+});
+
+/** H6: the doctor opened this patient; clears the "new since last viewed" dot. */
+export const markViewed = mutation({
+  args: { patientId: v.id("patients") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.patientId, { doctorLastViewedAt: Date.now() });
     return null;
   },
 });
