@@ -1,0 +1,20 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Mascot &#194;&#183; Hello">
+<g id="Frame" clip-path="url(#clip0_0_55)">
+<path id="Vector" d="M7.5 0.9C10.95 0.75 13.95 3.3 14.1 7.05C14.25 10.8 11.85 14.25 7.65 14.25C3.45 14.25 0.9 11.55 0.9 7.65C0.9 3.75 4.05 1.05 7.5 0.9Z" fill="url(#paint0_linear_0_55)"/>
+</g>
+<ellipse id="Ellipse" cx="4.5" cy="3.375" rx="1.5" ry="0.825" fill="white" fill-opacity="0.5"/>
+<rect id="Rectangle" x="5.25" y="5.4" width="1.575" height="3.45" rx="0.75" fill="#0D2A3A"/>
+<rect id="Rectangle_2" x="8.4" y="5.4" width="1.575" height="3.45" rx="0.75" fill="#0D2A3A"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_55" x1="0.9" y1="0.893717" x2="14.2554" y2="14.0995" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+<clipPath id="clip0_0_55">
+<rect width="15" height="15" fill="white"/>
+</clipPath>
+</defs>
+</svg>

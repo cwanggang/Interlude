@@ -41,6 +41,8 @@ const patientListRow = v.object({
   openAlerts: v.number(),
   /** H6: newest processed check-in, for "new since last viewed". */
   lastCheckinAt: v.union(v.null(), v.number()),
+  /** The newest open alert's symptom, for the table's Alert column. */
+  latestAlertSymptom: v.union(v.null(), v.string()),
 });
 
 const symptomEntryDoc = v.object({
@@ -123,6 +125,7 @@ export const list = query({
             : null,
           openAlerts: alerts.filter((a) => !a.acknowledged).length,
           lastCheckinAt: lastCheckin?.startedAt ?? null,
+          latestAlertSymptom: alerts.find((a) => !a.acknowledged)?.symptom ?? null,
         };
       }),
     );

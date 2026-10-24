@@ -37,6 +37,8 @@ const nextAppointment = v.object({
   openQuestions: v.number(),
   checkinsCompleted: v.number(),
   checkinDays: v.number(),
+  /** One entry per day, oldest first: did the patient complete that day's check-in (the dots). */
+  checkinPattern: v.array(v.boolean()),
 });
 
 const doctorHomeResult = v.object({
@@ -50,8 +52,9 @@ const doctorHomeResult = v.object({
 
 /** Local days (patient timezone) in the last COMPLETION_DAYS with an answered check-in. */
 async function checkinCompletion(ctx: QueryCtx, patient: Doc<"patients">, now: number) {
-  const days = new Set<string>();
-  for (let i = 0; i < COMPLETION_DAYS; i++) days.add(localDate(now - i * DAY_MS, patient.timezone));
+  const ordered: string[] = [];
+  for (let i = COMPLETION_DAYS - 1; i >= 0; i--) ordered.push(localDate(now - i * DAY_MS, patient.timezone));
+  const days = new Set(ordered);
   const since = now - (COMPLETION_DAYS + 1) * DAY_MS;
   const conversations = await ctx.db
     .query("conversations")
@@ -67,7 +70,11 @@ async function checkinCompletion(ctx: QueryCtx, patient: Doc<"patients">, now: n
       if (days.has(day)) completed.add(day);
     }
   }
-  return { checkinsCompleted: completed.size, checkinDays: COMPLETION_DAYS };
+  return {
+    checkinsCompleted: completed.size,
+    checkinDays: COMPLETION_DAYS,
+    checkinPattern: ordered.map((day) => completed.has(day)),
+  };
 }
 
 /** Brief concerns when the brief has sections, else the highest recent severities. */

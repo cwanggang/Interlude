@@ -37,7 +37,7 @@ export function greeting(now: number): string {
 }
 
 export function languageLabel(language: 'en' | 'es'): string {
-  return language === 'es' ? 'Spanish · interpreter recommended' : 'English'
+  return language === 'es' ? 'Spanish — interpreter recommended' : 'English'
 }
 
 /** Age in whole years from "1957-05-12". */
