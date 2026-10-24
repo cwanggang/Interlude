@@ -4,7 +4,7 @@
 import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { Redirect, router } from 'expo-router';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
 import { api } from '../../../../../convex/_generated/api';
 import type { Id } from '../../../../../convex/_generated/dataModel';
@@ -43,7 +43,7 @@ export default function Home() {
 
   return (
     <Screen footer={<Text variant="muted">{s.disclaimer}</Text>}>
-      <ScreenTitle title={s.hello(patient.name.split(' ')[0], new Date(now).getHours())} />
+      <ScreenTitle title={s.hello(patient.name.split(' ')[0], new Date(now).getHours())} right={<Bell patientId={patient._id} now={now} s={s} />} />
 
       {cycle && schedule && <Tile cycle={cycle} schedule={schedule} now={now} language={language} s={s} />}
 
@@ -210,5 +210,22 @@ function BeforeFirstVisit({ appointmentId, doctor, s }: { appointmentId?: Id<'ap
         <Text variant="muted">{s.emptyBeforeVisit}</Text>
       </Card>
     </>
+  );
+}
+
+/** G15: the bell in the Home header; the count is what happened in the last day. */
+function Bell({ patientId, now, s }: { patientId: Id<'patients'>; now: number; s: Strings }) {
+  const items = useQuery(api.notifications.list, { patientId, now });
+  const fresh = items?.filter((n) => now - n.at < 24 * 60 * 60_000).length ?? 0;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={s.notificationsLabel(fresh)}
+      onPress={() => router.push('/notifications')}
+      style={{ minWidth: theme.minTap, minHeight: theme.minTap, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: theme.space.xs, paddingHorizontal: theme.space.md }}
+    >
+      <Text variant="heading">🔔</Text>
+      {fresh > 0 && <Badge tone="danger" label={String(fresh)} />}
+    </Pressable>
   );
 }

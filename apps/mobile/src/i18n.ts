@@ -145,6 +145,15 @@ const strings = {
     visitHistory: 'Visit history',
     questionsOutcome: (answered: number, carried: number) => `${answered} questions answered, ${carried} moved to the next visit`,
     noHealthData: 'No check-ins in this period yet.',
+    // notifications
+    notificationsTitle: 'Notifications',
+    noNotifications: 'Nothing new.',
+    notificationsLabel: (n: number) => (n ? `Notifications, ${n} new` : 'Notifications'),
+    notificationText: {
+      summary_ready: 'Your visit summary is ready',
+      missed_call: 'You missed a check-in call',
+      question_captured: 'We saved a question from your call',
+    } as Record<string, string>,
   },
   es: {
     loading: 'Cargando…',
@@ -279,6 +288,14 @@ const strings = {
     visitHistory: 'Historial de citas',
     questionsOutcome: (answered: number, carried: number) => `${answered} preguntas contestadas, ${carried} pasan a la próxima cita`,
     noHealthData: 'Todavía no hay llamadas en este periodo.',
+    notificationsTitle: 'Notificaciones',
+    noNotifications: 'No hay nada nuevo.',
+    notificationsLabel: (n: number) => (n ? `Notificaciones, ${n} nuevas` : 'Notificaciones'),
+    notificationText: {
+      summary_ready: 'El resumen de su cita está listo',
+      missed_call: 'No contestó una llamada',
+      question_captured: 'Guardamos una pregunta de su llamada',
+    } as Record<string, string>,
   },
 } satisfies Record<Language, unknown>;
 

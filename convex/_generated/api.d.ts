@@ -21,6 +21,7 @@ import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as lib_time from "../lib/time.js";
 import type * as medications from "../medications.js";
+import type * as notifications from "../notifications.js";
 import type * as patients from "../patients.js";
 import type * as pipeline from "../pipeline.js";
 import type * as questions from "../questions.js";
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   "lib/time": typeof lib_time;
   medications: typeof medications;
+  notifications: typeof notifications;
   patients: typeof patients;
   pipeline: typeof pipeline;
   questions: typeof questions;
