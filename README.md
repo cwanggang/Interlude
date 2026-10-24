@@ -1,6 +1,6 @@
 # Patient Companion
 
-A bilingual (English/Spanish) voice companion for Spanish-speaking older adults waiting for a specialist visit. See `SPEC.md` for the full product spec.
+A bilingual (English/Spanish) voice companion for Spanish-speaking older adults with metabolic disease (demo: type 2 diabetes) waiting for an endocrinology visit. See `SPEC.md` for the full product spec.
 
 Prototype only: seeded demo accounts, not HIPAA-compliant, not medical advice, not for emergencies (call 911).
 

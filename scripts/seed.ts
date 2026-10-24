@@ -1,5 +1,5 @@
 // SHARED FILE. Dev A approves changes.
-// Demo data: one Spanish-speaking patient, one upcoming appointment, and SEED_DAYS
+// Demo data: one Spanish-speaking patient with type 2 diabetes, one upcoming appointment, and SEED_DAYS
 // days of processed check-in calls (today's comes from the live demo call).
 // Run with `npm run seed` (wraps `npx convex run seed:run`). Wipes every table first, then
 // schedules elastic.reindexAll so the Elastic indices match Convex (no stale duplicates).
@@ -48,214 +48,256 @@ type SeedDay = {
 };
 
 // Index 0 is the oldest day (SEED_DAYS days ago).
+// Story: type 2 diabetes waiting for endocrinology. High sugar (thirst, urination, fatigue) at
+// first; her clinic adds glipizide on day 1, and from day 2 she has low-sugar shaky, dizzy spells.
+// Glucose readings live in the quotes (no schema field); "metformina" is there for exact search.
 const DAYS: SeedDay[] = [
   {
     summaryEnglish:
-      "Reports dizziness for about two weeks, worse when standing up, and a frontal headache.",
+      "Reports three weeks of strong thirst, waking three times a night to urinate, and fatigue. Morning sugar 250.",
     transcript: [
       { role: "agent", text: "Hola María, ¿cómo se siente hoy?" },
-      { role: "user", text: "Me mareo mucho cuando me levanto de la cama. Y me duele la frente." },
+      {
+        role: "user",
+        text: "Muy cansada. Tengo mucha sed todo el día y me levanto tres veces en la noche al baño. El azúcar me salió en 250.",
+      },
     ],
     symptoms: [
       {
-        symptom: "dizziness",
-        symptomOriginal: "mareo",
-        severity: 4,
-        change: "new",
-        onset: "about two weeks ago",
-        duration: "a few minutes each episode",
-        character: "room spinning",
-        aggravating: "standing up quickly, getting out of bed",
-        relieving: "lying down",
-        timing: "mostly in the morning",
-        quoteOriginal: "Me mareo mucho cuando me levanto de la cama, como que todo da vueltas.",
-        quoteEnglish: "I get very dizzy when I get out of bed, like everything is spinning.",
-      },
-      {
-        symptom: "headache",
-        symptomOriginal: "dolor de cabeza",
+        symptom: "thirst",
+        symptomOriginal: "sed",
         severity: 6,
         change: "new",
-        onset: "about one week ago",
-        location: "forehead and temples",
-        character: "pressure",
-        timing: "afternoons",
-        quoteOriginal: "Me duele la frente, como una presión, sobre todo en la tarde.",
-        quoteEnglish: "My forehead hurts, like pressure, especially in the afternoon.",
-      },
-    ],
-    medications: [],
-  },
-  {
-    summaryEnglish: "Dizziness unchanged. Headache unchanged.",
-    transcript: [
-      { role: "agent", text: "¿El mareo está mejor, peor o igual que ayer?" },
-      { role: "user", text: "Igual. Y la cabeza también igual." },
-    ],
-    symptoms: [
-      {
-        symptom: "dizziness",
-        symptomOriginal: "mareo",
-        severity: 4,
-        change: "same",
-        quoteOriginal: "Igual que ayer, me mareé otra vez en la mañana.",
-        quoteEnglish: "Same as yesterday, I got dizzy again in the morning.",
+        onset: "about three weeks ago",
+        timing: "all day",
+        quoteOriginal: "Tengo mucha sed todo el día, tomo y tomo agua y no se me quita.",
+        quoteEnglish: "I'm very thirsty all day, I drink and drink water and it doesn't go away.",
       },
       {
-        symptom: "headache",
-        symptomOriginal: "dolor de cabeza",
+        symptom: "frequent urination",
+        symptomOriginal: "orinar mucho",
+        severity: 5,
+        change: "new",
+        onset: "about three weeks ago",
+        timing: "at night, about three times",
+        quoteOriginal: "Me levanto como tres veces cada noche para ir al baño.",
+        quoteEnglish: "I get up about three times every night to go to the bathroom.",
+      },
+      {
+        symptom: "fatigue",
+        symptomOriginal: "cansancio",
         severity: 6,
-        change: "same",
-        quoteOriginal: "La cabeza también igual, un seis.",
-        quoteEnglish: "My head is the same too, a six.",
+        change: "new",
+        character: "tired all day, even after sleeping",
+        quoteOriginal: "Estoy muy cansada todo el día. En la mañana el azúcar me salió en 250.",
+        quoteEnglish: "I'm very tired all day. This morning my sugar was 250.",
       },
     ],
-    medications: [],
+    medications: [{ medication: "metformin", action: "taken", note: "500 mg twice a day" }],
   },
   {
     summaryEnglish:
-      "Dizziness worse, nearly lost balance in the kitchen. Started ibuprofen for headache.",
+      "Thirst and urination unchanged, sugar 240. Clinic started glipizide 5 mg in the morning.",
     transcript: [
-      { role: "agent", text: "¿El mareo está mejor, peor o igual?" },
-      { role: "user", text: "Peor. Casi me caigo en la cocina. Empecé a tomar ibuprofeno para la cabeza." },
+      { role: "agent", text: "¿La sed está mejor, peor o igual que ayer?" },
+      { role: "user", text: "Igual. La clínica me dio una pastilla nueva, glipizida, para tomar en la mañana." },
     ],
     symptoms: [
       {
-        symptom: "dizziness",
-        symptomOriginal: "mareo",
-        severity: 5,
-        change: "worse",
-        aggravating: "turning head quickly",
-        quoteOriginal: "Peor. Casi me caigo en la cocina cuando volteé rápido.",
-        quoteEnglish: "Worse. I almost fell in the kitchen when I turned quickly.",
+        symptom: "thirst",
+        symptomOriginal: "sed",
+        severity: 6,
+        change: "same",
+        quoteOriginal: "Igual de sed que ayer. El azúcar en 240.",
+        quoteEnglish: "Same thirst as yesterday. Sugar at 240.",
       },
       {
-        symptom: "headache",
-        symptomOriginal: "dolor de cabeza",
+        symptom: "frequent urination",
+        symptomOriginal: "orinar mucho",
         severity: 5,
-        change: "better",
-        relieving: "ibuprofen",
-        quoteOriginal: "La cabeza un poco mejor con el ibuprofeno.",
-        quoteEnglish: "My head is a little better with the ibuprofen.",
+        change: "same",
+        quoteOriginal: "Me levanté tres veces otra vez.",
+        quoteEnglish: "I got up three times again.",
+      },
+      {
+        symptom: "fatigue",
+        symptomOriginal: "cansancio",
+        severity: 6,
+        change: "same",
+        quoteOriginal: "Igual de cansada.",
+        quoteEnglish: "Just as tired.",
       },
     ],
-    medications: [{ medication: "ibuprofen", action: "started", note: "400 mg for headache" }],
+    medications: [
+      { medication: "metformin", action: "taken" },
+      { medication: "glipizide", action: "started", note: "5 mg every morning, from her clinic" },
+    ],
   },
   {
-    summaryEnglish: "Dizziness unchanged. Headache improving on ibuprofen. New mild nausea.",
+    summaryEnglish:
+      "New shaky, sweaty dizzy spell before lunch with sugar 65, relieved by juice. Thirst a little better.",
     transcript: [
       { role: "agent", text: "¿Algo nuevo hoy?" },
-      { role: "user", text: "Tengo un poco de náuseas cuando me mareo." },
+      { role: "user", text: "Antes de comer me puse temblorosa y mareada. El azúcar me salió en 65. Me tomé un jugo." },
     ],
     symptoms: [
       {
         symptom: "dizziness",
-        symptomOriginal: "mareo",
+        symptomOriginal: "mareo y temblores",
+        severity: 5,
+        change: "new",
+        onset: "today, after starting glipizide",
+        duration: "about 15 minutes",
+        character: "shaky, sweaty, lightheaded",
+        relieving: "drinking juice",
+        timing: "before meals",
+        quoteOriginal: "Antes de comer me puse temblorosa y mareada, y sudando. El azúcar me salió en 65.",
+        quoteEnglish: "Before eating I got shaky and dizzy, and sweaty. My sugar was 65.",
+      },
+      {
+        symptom: "thirst",
+        symptomOriginal: "sed",
+        severity: 5,
+        change: "better",
+        quoteOriginal: "La sed un poquito mejor.",
+        quoteEnglish: "The thirst is a little better.",
+      },
+    ],
+    medications: [
+      { medication: "metformin", action: "taken" },
+      { medication: "glipizide", action: "taken" },
+    ],
+  },
+  {
+    summaryEnglish:
+      "Another shaky spell before dinner, sugar 70. New tingling in both feet at night. Missed evening metformin.",
+    transcript: [
+      { role: "agent", text: "¿Tomó sus medicinas?" },
+      { role: "user", text: "Se me olvidó la metformina en la noche. Y otra vez me temblé antes de la cena." },
+    ],
+    symptoms: [
+      {
+        symptom: "dizziness",
+        symptomOriginal: "mareo y temblores",
         severity: 5,
         change: "same",
-        quoteOriginal: "El mareo sigue igual.",
-        quoteEnglish: "The dizziness is the same.",
+        quoteOriginal: "Otra vez me puse temblorosa antes de la cena, el azúcar en 70.",
+        quoteEnglish: "I got shaky again before dinner, sugar at 70.",
       },
       {
-        symptom: "headache",
-        symptomOriginal: "dolor de cabeza",
-        severity: 4,
-        change: "better",
-        quoteOriginal: "La cabeza está mejor, un cuatro.",
-        quoteEnglish: "My head is better, a four.",
-      },
-      {
-        symptom: "nausea",
-        symptomOriginal: "náuseas",
+        symptom: "tingling",
+        symptomOriginal: "hormigueo",
         severity: 3,
         change: "new",
-        onset: "today",
-        aggravating: "during dizzy spells",
-        quoteOriginal: "Tengo un poco de náuseas cuando me mareo.",
-        quoteEnglish: "I feel a little nauseous when I get dizzy.",
+        onset: "this week",
+        location: "both feet",
+        character: "pins and needles",
+        timing: "at night",
+        quoteOriginal: "Siento hormigueo en los dos pies en la noche, como agujitas.",
+        quoteEnglish: "I feel tingling in both feet at night, like little needles.",
+      },
+      {
+        symptom: "fatigue",
+        symptomOriginal: "cansancio",
+        severity: 5,
+        change: "better",
+        quoteOriginal: "Un poco menos cansada.",
+        quoteEnglish: "A little less tired.",
       },
     ],
-    medications: [{ medication: "ibuprofen", action: "taken" }],
+    medications: [
+      { medication: "metformin", action: "missed", note: "evening dose" },
+      { medication: "glipizide", action: "taken" },
+    ],
   },
   {
-    summaryEnglish: "Dizziness worse. Headache better. Nausea slightly worse. Missed ibuprofen.",
+    summaryEnglish:
+      "Worse low-sugar spell at the store, sugar 58, ate candy. Thirst improving, morning sugar 180. Tingling unchanged.",
     transcript: [
-      { role: "agent", text: "¿Tomó alguna medicina?" },
-      { role: "user", text: "Hoy se me olvidó el ibuprofeno. El mareo está peor." },
+      { role: "agent", text: "¿El mareo está mejor, peor o igual?" },
+      { role: "user", text: "Peor. En la tienda me sentí muy débil y sudando, el azúcar estaba en 58." },
     ],
     symptoms: [
       {
         symptom: "dizziness",
-        symptomOriginal: "mareo",
+        symptomOriginal: "mareo y temblores",
         severity: 6,
         change: "worse",
-        quoteOriginal: "El mareo está peor, tuve que sentarme en la ducha.",
-        quoteEnglish: "The dizziness is worse, I had to sit down in the shower.",
+        aggravating: "skipping lunch",
+        relieving: "eating candy",
+        quoteOriginal: "En la tienda me sentí muy débil y sudando, el azúcar estaba en 58. Me comí unos dulces.",
+        quoteEnglish: "At the store I felt very weak and sweaty, my sugar was 58. I ate some candy.",
       },
       {
-        symptom: "headache",
-        symptomOriginal: "dolor de cabeza",
-        severity: 3,
-        change: "better",
-        quoteOriginal: "La cabeza casi no me duele.",
-        quoteEnglish: "My head barely hurts.",
-      },
-      {
-        symptom: "nausea",
-        symptomOriginal: "náuseas",
+        symptom: "thirst",
+        symptomOriginal: "sed",
         severity: 4,
-        change: "worse",
-        quoteOriginal: "Las náuseas un poquito más fuertes.",
-        quoteEnglish: "The nausea is a little stronger.",
+        change: "better",
+        quoteOriginal: "Ya no tengo tanta sed desde que tomo bien la metformina. En la mañana, 180.",
+        quoteEnglish: "I'm not as thirsty since I've been taking the metformin properly. In the morning, 180.",
+      },
+      {
+        symptom: "tingling",
+        symptomOriginal: "hormigueo",
+        severity: 3,
+        change: "same",
+        quoteOriginal: "El hormigueo en los pies igual.",
+        quoteEnglish: "The tingling in my feet is the same.",
       },
     ],
-    medications: [{ medication: "ibuprofen", action: "missed" }],
+    medications: [
+      { medication: "metformin", action: "taken" },
+      { medication: "glipizide", action: "taken" },
+    ],
   },
   {
-    summaryEnglish: "Dizziness unchanged at 6. Headache stable. Nausea unchanged.",
+    summaryEnglish: "Shaky spells unchanged before meals. Thirst and tingling unchanged.",
     transcript: [
       { role: "agent", text: "¿Hay algo que quiera preguntarle al doctor?" },
-      { role: "user", text: "Sí, ¿puedo seguir tomando ibuprofeno?" },
+      { role: "user", text: "Sí, ¿qué hago si el azúcar me baja otra vez?" },
     ],
     symptoms: [
       {
         symptom: "dizziness",
-        symptomOriginal: "mareo",
+        symptomOriginal: "mareo y temblores",
         severity: 6,
         change: "same",
-        quoteOriginal: "Sigue igual, un seis.",
-        quoteEnglish: "It's the same, a six.",
+        quoteOriginal: "Sigue igual, me tiembla todo antes de comer.",
+        quoteEnglish: "It's the same, I shake all over before eating.",
       },
       {
-        symptom: "headache",
-        symptomOriginal: "dolor de cabeza",
-        severity: 3,
-        change: "same",
-        quoteOriginal: "La cabeza igual, no tan mal.",
-        quoteEnglish: "My head is the same, not so bad.",
-      },
-      {
-        symptom: "nausea",
-        symptomOriginal: "náuseas",
+        symptom: "thirst",
+        symptomOriginal: "sed",
         severity: 4,
         change: "same",
-        quoteOriginal: "Las náuseas igual.",
-        quoteEnglish: "The nausea is the same.",
+        quoteOriginal: "La sed igual, no tan mal.",
+        quoteEnglish: "The thirst is the same, not so bad.",
+      },
+      {
+        symptom: "tingling",
+        symptomOriginal: "hormigueo",
+        severity: 3,
+        change: "same",
+        quoteOriginal: "Los pies igual, con hormigueo en la noche.",
+        quoteEnglish: "My feet are the same, tingling at night.",
       },
     ],
-    medications: [{ medication: "ibuprofen", action: "taken" }],
+    medications: [
+      { medication: "metformin", action: "taken" },
+      { medication: "glipizide", action: "taken" },
+    ],
   },
 ];
 
 const QUESTIONS = [
   {
-    textOriginal: "¿Por qué me mareo cuando me levanto?",
-    textEnglish: "Why do I get dizzy when I stand up?",
+    textOriginal: "¿La pastilla nueva me está bajando mucho el azúcar?",
+    textEnglish: "Is the new pill lowering my sugar too much?",
     source: "typed" as const,
   },
   {
-    textOriginal: "¿Puedo seguir tomando ibuprofeno?",
-    textEnglish: "Can I keep taking ibuprofen?",
+    textOriginal: "¿Qué hago si el azúcar me baja otra vez?",
+    textEnglish: "What do I do if my sugar drops again?",
     source: "voice" as const,
   },
 ];
@@ -280,12 +322,12 @@ export async function seed(ctx: MutationCtx, args: { phone?: string }) {
     callTimeLocal: "18:30",
     timezone: TIMEZONE,
     consentCalls: true,
-    reasonForVisit: "Dizziness and headaches",
+    reasonForVisit: "Type 2 diabetes: high sugar, then low-sugar spells on a new medicine",
   });
 
   const appointmentId = await ctx.db.insert("appointments", {
     patientId,
-    doctorName: "Dr. Sarah Chen",
+    doctorName: "Dr. Sarah Chen (Endocrinology)",
     scheduledAt: now + 5 * DAY_MS,
     status: "upcoming",
   });
@@ -338,9 +380,11 @@ export async function seed(ctx: MutationCtx, args: { phone?: string }) {
     patientId,
     appointmentId,
     textEnglish:
-      "Spanish-speaking patient with 2 weeks of positional dizziness, worsening from 4/10 to 6/10, " +
-      "now with nausea during spells and a near-fall in the kitchen. Headache improved on ibuprofen " +
-      "(one missed dose). Open questions: cause of dizziness on standing; whether to continue ibuprofen.",
+      "Spanish-speaking patient with type 2 diabetes. Three weeks of thirst, nighttime urination and " +
+      "fatigue with morning sugars of 240-250, improving on metformin (one missed evening dose). Since " +
+      "glipizide 5 mg was added, repeated shaky, sweaty spells before meals with sugars of 58-70, " +
+      "worsening (6/10), treated with juice or candy. New tingling in both feet at night. Open " +
+      "questions: whether the new pill is lowering her sugar too much; what to do when it drops.",
     createdAt: now,
     source: "seed",
   });

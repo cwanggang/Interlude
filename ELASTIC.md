@@ -117,7 +117,7 @@ Run one task per Claude Code session. Each task ends with a command that proves 
 | # | Task | Done when |
 |---|---|---|
 | 1 | Jina inference IDs, `ensureIndices`, `indexCheckin`, `reindexAll` | After `npm run seed`, `npx convex run elastic:searchCheckins` with query "dizziness" returns Spanish quotes, and a second seed doesn't double the hit count |
-| 2 | `timeline` and `searchCheckins` with hybrid search and reranking | Timeline JSON shows the 6 seeded days (today is null until the live call); "ibuprofeno" and "mareo" both return correct hits |
+| 2 | `timeline` and `searchCheckins` with hybrid search and reranking | Timeline JSON shows the 6 seeded days (today is null until the live call); "metformina" and "mareo" both return correct hits |
 | 3 | `indexVisitChunks`, `searchVisit` | Spanish question "¿Cuándo tomo la pastilla nueva?" returns the English passage about the new medication, with latency logged |
 | 4 | Agent Builder agent, tools, `askRecord` | "When did the dizziness start?" returns an answer citing a dated quote |
 | 5 | Workflow `pre-visit-brief`, `generateBrief` | The dashboard button produces a new `briefs` row (needs Track A's route; the fallback path doesn't) |

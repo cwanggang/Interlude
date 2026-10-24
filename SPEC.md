@@ -6,7 +6,8 @@ Oct 24, 2026 · @Caden
 
 We are building a bilingual (English and Spanish) voice companion. It checks in on patients by phone every day, turns those calls into a symptom timeline the doctor reads before the visit, and explains the visit afterward in the patient's language.
 
-- **Who it serves:** Spanish-speaking older adults waiting weeks for a specialist appointment. Name this community in the pitch; the Anthropic track rewards a specific community.
+- **Who it serves:** Spanish-speaking older adults with metabolic disease (the demo patient has type 2 diabetes) waiting weeks for an endocrinology appointment. Name this community in the pitch; the Anthropic track rewards a specific community. The narrow focus keeps the vocabulary manageable: glucose readings, metformin and other diabetes medicines, thirst, urination, fatigue, low-sugar spells, foot tingling.
+- **Demo storyline (seeded):** María has had high sugar (thirst, nighttime urination, fatigue, readings of 240-250) for three weeks on metformin. Her clinic added glipizide, and since then she has shaky, sweaty, dizzy spells before meals with readings of 58-70. The doctor sees that pattern on the timeline before the visit.
 - **Two interfaces:** a patient mobile app (Expo) plus daily phone calls, and a doctor web dashboard.
 - **The cycle:** before the visit (check-ins, questions) → the visit (recording, summary) → after the visit (explanation, follow-ups) → the next visit. Check-ins and the question queue keep running after every visit.
 
@@ -404,13 +405,14 @@ Keep the call under 2 minutes. Ask one short question at a time:
 1. How are you feeling today compared to yesterday?
 2. For each active symptom: better, worse, or the same? How bad, 0 to 10?
 3. Anything new? If yes, when did it start, where, and what makes it better or worse?
-4. Did you take any medicine for it?
+4. Did you take your medicines today? Did you check your sugar, and what was the number?
 5. Is there anything you want to ask the doctor? (Repeat the question back to confirm.)
 Then thank them and say you'll call tomorrow.
 
 Never diagnose, never give medical advice, never recommend medicine.
 RED FLAGS: if the patient mentions chest pain or pressure, trouble breathing,
-face drooping, arm weakness, slurred speech, fainting, severe bleeding, or
+face drooping, arm weakness, slurred speech, fainting, severe bleeding,
+confusion or trouble staying awake (possible very low blood sugar), or
 thoughts of harming themselves: call report_red_flag, then tell them clearly to
 hang up and call 911 now (for thoughts of self-harm: call or text 988), and end the call.
 ```
@@ -619,7 +621,7 @@ The demo runs in two minutes and opens with the phone ringing. Six days of check
 ### Demo script (2 minutes)
 
 1. **0:00** One sentence on the problem: patients forget when symptoms started, and language makes it worse.
-2. **0:10** Tap "Call me now". A teammate's phone rings. The agent asks in Spanish how the dizziness is compared to yesterday, and the teammate answers, including a question for the doctor.
+2. **0:10** Tap "Call me now". A teammate's phone rings. The agent asks in Spanish how the shaky, dizzy spells are compared to yesterday and what her sugar was, and the teammate answers, including a question for the doctor.
 3. **0:45** Doctor dashboard: today's point appears live on the 7-day timeline, with the Spanish quote and its English translation, the structured history card, and the new question in the list.
 4. **1:05** The Elastic moment: type "dizziness" in search and Spanish check-ins come back, reranked. Ask the record "When did the dizziness start, and is it getting worse?"; the answer cites dated quotes. Point to the pre-visit brief card. "All on Elastic Cloud Serverless."
 5. **1:25** Play 15 seconds of the scripted visit, then show the Spanish summary on the patient app, medications first.
@@ -650,7 +652,7 @@ Check Devpost for a limit on how many tracks one project can enter.
 - [ ] Whose US phone number receives the demo calls?
 - [x] Elastic: Cloud Serverless via ela.st/calhacks. Remaining checks (Jina endpoint IDs, Workflows enabled, `copy_to` into `semantic_text`) are in `ELASTIC.md` section 3.
 - [ ] Does Cartesia batch transcription handle a mixed-language file (English doctor, Spanish patient)? If not, re-record with an interpreter so each turn is in one language.
-- [ ] Who records the scripted visit audio (doctor in English, patient in Spanish)?
+- [ ] Who records the scripted visit audio (doctor in English, patient in Spanish)? Script it on the seed story: the endocrinologist lowers glipizide to 2.5 mg with breakfast, says not to skip meals, explains what to do when sugar is under 70, keeps metformin 500 mg twice a day, and orders an A1c and a foot exam.
 - [ ] Does the designer have a Figma Dev or Full seat (needed for the Figma MCP server)?
 - [ ] Is the contract merged to `main` before either track starts?
 
