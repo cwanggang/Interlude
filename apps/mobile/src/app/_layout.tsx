@@ -18,7 +18,10 @@ export default function RootLayout() {
           headerTintColor: theme.color.primary,
           contentStyle: { backgroundColor: theme.color.bg },
         }}
-      />
+      >
+        {/* The tabs have their own headers; history and prep open on top of them. */}
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      </Stack>
     </ConvexProvider>
   );
 }

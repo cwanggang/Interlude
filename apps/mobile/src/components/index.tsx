@@ -1,6 +1,7 @@
 // The six shared components (plus TextField). Screens build only from these, so the design pass
 // restyles here.
-import type { ReactNode } from 'react';
+import { useNavigation } from 'expo-router';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text as RNText, TextInput, View, type TextStyle } from 'react-native';
 
 import { theme, type Tone } from '../theme';
@@ -34,9 +35,9 @@ export function Card({ title, tone = 'neutral', children }: { title?: string; to
   return (
     <View
       style={{
-        backgroundColor: tone === 'danger' ? theme.color.dangerBg : theme.color.surface,
+        backgroundColor: tone === 'danger' ? theme.color.dangerBg : tone === 'primary' ? theme.color.primaryBg : theme.color.surface,
         borderWidth: 1,
-        borderColor: tone === 'danger' ? theme.color.danger : theme.color.border,
+        borderColor: tone === 'danger' ? theme.color.danger : tone === 'primary' ? theme.color.primary : theme.color.border,
         borderRadius: theme.radius.md,
         padding: theme.space.lg,
         gap: theme.space.md,
@@ -211,4 +212,13 @@ export function Choice<T extends string>({ value, options, onChange }: { value: 
       ))}
     </View>
   );
+}
+
+/** Sets the header title of whichever navigator shows this screen (stack or tab). */
+export function ScreenTitle({ title }: { title: string }) {
+  const navigation = useNavigation();
+  useLayoutEffect(() => {
+    navigation.setOptions({ title });
+  }, [navigation, title]);
+  return null;
 }

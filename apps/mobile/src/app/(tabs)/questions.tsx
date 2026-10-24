@@ -1,15 +1,14 @@
 // Screen 4: question queue (B6). Add, edit, delete, reorder; voice questions from calls are tagged.
 import { useMutation, useQuery } from 'convex/react';
-import { Stack } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
 
-import { api } from '../../../../convex/_generated/api';
-import type { Doc, Id } from '../../../../convex/_generated/dataModel';
-import { Badge, Button, Card, Screen, Text, TextField } from '../components';
-import type { Strings } from '../i18n';
-import { theme } from '../theme';
-import { usePatient } from '../usePatient';
+import { api } from '../../../../../convex/_generated/api';
+import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
+import { Badge, Button, Card, Screen, ScreenTitle, Text, TextField } from '../../components';
+import type { Strings } from '../../i18n';
+import { theme } from '../../theme';
+import { usePatient } from '../../usePatient';
 
 export default function Questions() {
   const { patient, appointment, s } = usePatient();
@@ -21,7 +20,7 @@ export default function Questions() {
   if (!patient || !appointment) {
     return (
       <Screen>
-        <Stack.Screen options={{ title: s.questionsTitle }} />
+        <ScreenTitle title={s.questionsTitle} />
         <Text>{patient === undefined || appointment === undefined ? s.loading : s.noVisit}</Text>
       </Screen>
     );
@@ -42,7 +41,7 @@ export default function Questions() {
 
   return (
     <Screen>
-      <Stack.Screen options={{ title: s.questionsTitle }} />
+      <ScreenTitle title={s.questionsTitle} />
       <Card title={s.addQuestion}>
         <TextField value={draft} onChangeText={setDraft} placeholder={s.questionPlaceholder} multiline />
         <Button label={s.add} onPress={() => void onAdd()} disabled={!draft.trim()} />

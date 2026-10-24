@@ -1,14 +1,14 @@
 // Screen 5: onboarding and profile. A1 fields, A3 language switch, F4 consent to automated calls.
 import { useMutation } from 'convex/react';
-import { Stack, router } from 'expo-router';
+import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Switch, View } from 'react-native';
 
-import { api } from '../../../../convex/_generated/api';
-import { Button, Card, Choice, Screen, Text, TextField } from '../components';
-import { t, type Language } from '../i18n';
-import { theme } from '../theme';
-import { usePatient } from '../usePatient';
+import { api } from '../../../../../convex/_generated/api';
+import { Button, Card, Choice, Screen, ScreenTitle, Text, TextField } from '../../components';
+import { t, type Language } from '../../i18n';
+import { theme } from '../../theme';
+import { usePatient } from '../../usePatient';
 
 const PHONE = /^\+1\d{10}$/;
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -78,7 +78,7 @@ export default function Profile() {
 
   return (
     <Screen footer={<Button big label={s.save} onPress={() => void onSave()} />}>
-      <Stack.Screen options={{ title: isNew ? s.welcomeTitle : s.profileTitle }} />
+      <ScreenTitle title={isNew ? s.welcomeTitle : s.profileTitle} />
       <Card>
         <Text variant="heading">{s.language}</Text>
         <Choice
