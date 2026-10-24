@@ -47,11 +47,17 @@ CARTESIA_EXPLAINER_AGENT_ID_EN CARTESIA_EXPLAINER_AGENT_ID_ES
 CARTESIA_FROM_NUMBER_ID
 CARTESIA_WEBHOOK_SECRET
 ANTHROPIC_API_KEY
-ELASTIC_CLOUD_ID   ELASTIC_API_KEY
+ELASTIC_URL                     Serverless Elasticsearch endpoint
+ELASTIC_API_KEY
+KIBANA_URL                      Agent Builder and Workflows APIs
 ELASTIC_INDEX_PREFIX            per deployment: a_, b_, prod_
+ELASTIC_AGENT_ID                Agent Builder agent ID
+ELASTIC_WEBHOOK_SECRET          sent by the pre-visit-brief Workflow
 DEMO_PHONE                      optional default phone for the seed
 ```
 
 ## Webhooks
 
-Cartesia webhook tools point at `https://<deployment>.convex.site/cartesia/{red-flag,add-question,search-visit}` with header `x-webhook-secret`.
+Cartesia webhook tools point at `https://<deployment>.convex.site/cartesia/{red-flag,add-question,search-visit}` with header `x-webhook-secret: $CARTESIA_WEBHOOK_SECRET`.
+
+The Elastic `pre-visit-brief` Workflow posts to `https://<deployment>.convex.site/elastic/previsit-brief` with header `x-webhook-secret: $ELASTIC_WEBHOOK_SECRET`. See `ELASTIC.md`.

@@ -10,6 +10,7 @@
 
 import type * as alerts from "../alerts.js";
 import type * as appointments from "../appointments.js";
+import type * as briefs from "../briefs.js";
 import type * as calls from "../calls.js";
 import type * as cartesia from "../cartesia.js";
 import type * as claude from "../claude.js";
@@ -31,6 +32,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   alerts: typeof alerts;
   appointments: typeof appointments;
+  briefs: typeof briefs;
   calls: typeof calls;
   cartesia: typeof cartesia;
   claude: typeof claude;

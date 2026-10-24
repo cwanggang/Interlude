@@ -104,4 +104,14 @@ export default defineSchema({
     releasedToPatient: v.boolean(),
     status: v.string(), // uploaded | transcribed | summarized
   }).index("by_appointment", ["appointmentId"]),
+
+  // C9 pre-visit brief, written by the Elastic Workflow (via POST /elastic/previsit-brief)
+  // or by the Convex fallback in elastic.generateBrief
+  briefs: defineTable({
+    patientId: v.id("patients"),
+    appointmentId: v.id("appointments"),
+    textEnglish: v.string(),
+    createdAt: v.number(),
+    source: v.union(v.literal("elastic_workflow"), v.literal("fallback"), v.literal("seed")),
+  }).index("by_appointment", ["appointmentId"]),
 });

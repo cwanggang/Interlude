@@ -1,4 +1,4 @@
-Read SPEC.md before every task. Build only the phase you are asked for. Ask before changing the data model or the stack.
+Read SPEC.md before every task. Track B also reads ELASTIC.md before any Elastic task. Build only the phase you are asked for. Ask before changing the data model or the stack.
 
 ## Tracks
 
@@ -7,8 +7,8 @@ Every session starts with "I am Track A" or "I am Track B". Only edit files your
 | Track | Owns |
 | --- | --- |
 | A: Voice + AI pipeline | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs |
-| B: Data + apps | `convex/elastic.ts`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files |
-| Shared (Dev A approves) | `convex/schema.ts`, `convex/seed.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `CLAUDE.md` |
+| B: Data + apps | `convex/elastic.ts`, `convex/briefs.ts`, `/elastic/*`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files |
+| Shared (Dev A approves) | `convex/schema.ts`, `convex/seed.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `ELASTIC.md`, `CLAUDE.md` |
 
 ## Cross-track functions (the contract)
 
@@ -16,9 +16,11 @@ Do not change the args or return validators of these without both devs agreeing.
 
 | Function | Owner | Called by |
 | --- | --- | --- |
-| `internal.elastic.indexCheckin` | B | A's pipeline, the seed |
+| `internal.elastic.indexCheckin` | B | A's pipeline (awaited, before marking the conversation `processed`) |
+| `internal.elastic.reindexAll` | B | the seed |
 | `internal.elastic.indexVisitChunks` | B | A's visit processing |
 | `internal.elastic.searchVisit` | B | A's `/cartesia/search-visit` |
+| `internal.briefs.save` | B | A's `POST /elastic/previsit-brief` (checks `ELASTIC_WEBHOOK_SECRET`) |
 | `internal.claude.translateQuestion` | A | B's `questions.add` (non-English typed questions) |
 | `api.calls.triggerNow`, `api.calls.getConversation` | A | B's "Call me now" button |
 | `api.calls.getAccessToken` | A | A's voice client |
