@@ -2,27 +2,95 @@
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react'
 import { theme, type Tone } from '../theme'
 
-export function Screen({ title, actions, children }: { title: ReactNode; actions?: ReactNode; children: ReactNode }) {
+/** Page with a sticky header: title, actions on the right, and an optional banner row below. */
+export function Screen({ title, subtitle, actions, banner, children }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; banner?: ReactNode; children: ReactNode }) {
   return (
     <div style={{ minHeight: '100vh', background: theme.color.bg, color: theme.color.text, fontFamily: theme.font.family }}>
       <header
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: theme.space.md,
-          padding: `${theme.space.md}px ${theme.space.xl}px`,
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
           background: theme.color.surface,
           borderBottom: `1px solid ${theme.color.border}`,
         }}
       >
-        <Text variant="title">{title}</Text>
-        <div style={{ display: 'flex', gap: theme.space.sm }}>{actions}</div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: theme.space.md,
+            padding: `${theme.space.md}px ${theme.space.xl}px`,
+          }}
+        >
+          <div style={{ display: 'grid', gap: theme.space.xs }}>
+            <Text variant="title">{title}</Text>
+            {subtitle && <Text variant="muted">{subtitle}</Text>}
+          </div>
+          <div style={{ display: 'flex', gap: theme.space.sm, alignItems: 'center', flexWrap: 'wrap' }}>{actions}</div>
+        </div>
+        {banner}
       </header>
       <main style={{ padding: theme.space.xl, display: 'grid', gap: theme.space.lg, maxWidth: 1200, margin: '0 auto' }}>
         {children}
       </main>
     </div>
+  )
+}
+
+/** Full-width red row for the sticky header (red-flag banner). */
+export function Banner({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.md,
+        padding: `${theme.space.sm}px ${theme.space.xl}px`,
+        background: theme.color.danger,
+        color: theme.color.primaryText,
+        fontSize: theme.font.size.md,
+      }}
+    >
+      <div>{children}</div>
+      {actions && <div style={{ display: 'flex', gap: theme.space.sm }}>{actions}</div>}
+    </div>
+  )
+}
+
+/** Panel that slides over the right edge of the page (timeline quotes). */
+export function SidePanel({ title, onClose, children }: { title: ReactNode; onClose: () => void; children: ReactNode }) {
+  return (
+    <aside
+      style={{
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 20,
+        width: 'min(440px, 100vw)',
+        overflowY: 'auto',
+        background: theme.color.surface,
+        borderLeft: `1px solid ${theme.color.border}`,
+        boxShadow: '-4px 0 16px rgba(0, 0, 0, 0.12)',
+        padding: theme.space.lg,
+        display: 'grid',
+        alignContent: 'start',
+        gap: theme.space.md,
+        fontFamily: theme.font.family,
+        color: theme.color.text,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.space.md }}>
+        <Text variant="heading">{title}</Text>
+        <Button variant="secondary" onClick={onClose} aria-label="Close">Close</Button>
+      </div>
+      {children}
+    </aside>
   )
 }
 

@@ -63,7 +63,7 @@ export default function Timeline({ patientId, selectedDate, onSelectDate }: { pa
   return (
     <Card
       title="Symptom timeline (0–10)"
-      actions={selectedDate && <Text variant="muted">Showing quotes for {formatDay(selectedDate)} · <a href="#" onClick={(e) => { e.preventDefault(); onSelectDate(null) }}>clear</a></Text>}
+      actions={<Text variant="muted">{selectedDate ? `Quotes for ${formatDay(selectedDate)} are open` : "Click a day to see the patient's words"}</Text>}
     >
       {error && <Text variant="muted">Timeline unavailable: {error}</Text>}
       {!error && series === null && <Text variant="muted">Loading…</Text>}
