@@ -1,5 +1,5 @@
 // TRACK A owns this file. Visit recording → transcript → summaries → Elastic passages.
-// D5 (unaddressed concerns) has its schema field (unaddressedSymptoms) but isn't computed yet (A2).
+// Summaries follow VisitSummary v2; processing also writes visitTasks (G11) and D5.
 import { v, type Infer } from "convex/values";
 import {
   internalAction,
@@ -15,9 +15,20 @@ import { transcribeFile, type Language } from "./cartesia";
 import {
   checkQuestionCoverage,
   cleanVisitTranscript,
+  findUnaddressedSymptoms,
   summarizeVisit,
+  type VisitSummary,
   type VisitTurn,
 } from "./claude";
+import { DAY_MS, localDate } from "./lib/time";
+
+/** D5: a symptom reported since the previous visit, with its latest check-in. */
+const unaddressedSymptom = v.object({
+  symptom: v.string(),
+  symptomOriginal: v.string(),
+  lastDate: v.string(),
+  lastSeverity: v.optional(v.number()),
+});
 
 const visitDoc = v.object({
   _id: v.id("visits"),
@@ -32,16 +43,7 @@ const visitDoc = v.object({
   releasedToPatient: v.boolean(),
   status: v.string(),
   releasedAt: v.optional(v.number()),
-  unaddressedSymptoms: v.optional(
-    v.array(
-      v.object({
-        symptom: v.string(),
-        symptomOriginal: v.string(),
-        lastDate: v.string(),
-        lastSeverity: v.optional(v.number()),
-      }),
-    ),
-  ),
+  unaddressedSymptoms: v.optional(v.array(unaddressedSymptom)),
 });
 
 const turnValidator = v.object({
@@ -278,23 +280,27 @@ export const processVisit = internalAction({
       console.error(`[visits] ${args.visitId}: indexVisitChunks failed:`, error);
     }
 
-    // D3 summaries and D4 coverage run in parallel.
-    let summary, coverage;
+    // D3 summaries + tasks, D4 coverage and D5 unaddressed symptoms run in parallel.
+    let summary, coverage, notDiscussed;
     try {
-      [summary, coverage] = await Promise.all([
-        summarizeVisit(transcript, language),
+      [summary, coverage, notDiscussed] = await Promise.all([
+        summarizeVisit(transcript, language, context.priorMedications),
         checkQuestionCoverage(
           context.questions.map((q) => ({ id: q._id, textEnglish: q.textEnglish })),
           transcript,
         ),
+        findUnaddressedSymptoms(context.reportedSymptoms, transcript),
       ]);
     } catch (error) {
       return await fail("summary", error);
     }
+    const unaddressed = context.reportedSymptoms.filter((s) => notDiscussed.includes(s.symptom));
     await ctx.runMutation(internal.visits.saveSummary, {
       visitId: args.visitId,
       summaryEnglish: summary.english,
       summaryPatientLang: summary.patientLang,
+      tasks: summary.tasks,
+      unaddressedSymptoms: unaddressed,
       coverage: coverage
         .filter((c) => context.questions.some((q) => q._id === c.id))
         .map((c) => ({
@@ -304,8 +310,9 @@ export const processVisit = internalAction({
         })),
     });
     log(
-      `summarized: ${summary.english.medications.length} medications, ` +
-        `${coverage.filter((c) => c.answered).length}/${coverage.length} questions answered`,
+      `summarized: ${summary.english.medications.length} medications, ${summary.tasks.length} tasks, ` +
+        `${coverage.filter((c) => c.answered).length}/${coverage.length} questions answered, ` +
+        `not discussed: ${unaddressed.map((s) => s.symptom).join(", ") || "none"}`,
     );
     return null;
   },
@@ -321,6 +328,8 @@ export const getProcessingContext = internalQuery({
       language: v.string(),
       audioStorageId: v.optional(v.id("_storage")),
       questions: v.array(v.object({ _id: v.id("questions"), textEnglish: v.string() })),
+      priorMedications: v.array(v.string()),
+      reportedSymptoms: v.array(unaddressedSymptom),
     }),
   ),
   handler: async (ctx, args) => {
@@ -334,6 +343,35 @@ export const getProcessingContext = internalQuery({
       .query("questions")
       .withIndex("by_appointment", (q) => q.eq("appointmentId", appointment._id))
       .take(200);
+
+    // The window since the previous visit (or 30 days), for D5 and prior medications.
+    const previous = (await visitsForPatient(ctx, patient._id)).find(
+      (r) => r.appointment.scheduledAt < appointment.scheduledAt,
+    );
+    const sinceMs = previous?.appointment.scheduledAt ?? appointment.scheduledAt - 30 * DAY_MS;
+    const since = localDate(sinceMs, patient.timezone);
+
+    const entries = await ctx.db
+      .query("symptomEntries")
+      .withIndex("by_patient_date", (q) => q.eq("patientId", patient._id).gte("date", since))
+      .order("desc")
+      .take(500);
+    const latest = new Map<string, Doc<"symptomEntries">>();
+    for (const e of entries) if (!latest.has(e.symptom)) latest.set(e.symptom, e);
+
+    // Medication keys: the previous visit's list (minus stopped) plus anything reported since.
+    const prior = new Set<string>();
+    const prevSummary = previous?.visit.summaryEnglish as VisitSummary | undefined;
+    for (const m of prevSummary?.medications ?? []) {
+      if (m.change !== "stopped" && m.key) prior.add(m.key);
+    }
+    const events = await ctx.db
+      .query("medicationEvents")
+      .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+      .order("desc")
+      .take(300);
+    for (const m of events) if (m.date >= since && m.action !== "stopped") prior.add(m.medication);
+
     return {
       patientId: patient._id,
       appointmentId: appointment._id,
@@ -342,6 +380,13 @@ export const getProcessingContext = internalQuery({
       questions: questions
         .filter((q) => q.status !== "carried_over")
         .map((q) => ({ _id: q._id, textEnglish: q.textEnglish })),
+      priorMedications: [...prior],
+      reportedSymptoms: [...latest.values()].map((e) => ({
+        symptom: e.symptom,
+        symptomOriginal: e.symptomOriginal,
+        lastDate: e.date,
+        lastSeverity: e.severity,
+      })),
     };
   },
 });
@@ -355,12 +400,25 @@ export const saveTranscript = internalMutation({
   },
 });
 
-/** Saves both summaries and D4 coverage, then marks the visit summarized. */
+/** Saves both summaries, tasks (G11), D4 coverage and D5, then marks the visit summarized. */
 export const saveSummary = internalMutation({
   args: {
     visitId: v.id("visits"),
     summaryEnglish: v.any(),
     summaryPatientLang: v.any(),
+    tasks: v.array(
+      v.object({
+        kind: v.union(
+          v.literal("prescription"),
+          v.literal("follow_up"),
+          v.literal("test"),
+          v.literal("other"),
+        ),
+        textEnglish: v.string(),
+        textPatientLang: v.string(),
+      }),
+    ),
+    unaddressedSymptoms: v.array(unaddressedSymptom),
     coverage: v.array(
       v.object({
         questionId: v.id("questions"),
@@ -379,9 +437,30 @@ export const saveSummary = internalMutation({
         answerEvidence: c.answered ? c.evidence : undefined,
       });
     }
+    const visit = await ctx.db.get("visits", args.visitId);
+    if (!visit) return null;
+    const appointment = await ctx.db.get("appointments", visit.appointmentId);
+    if (!appointment) return null;
+    // Reprocessing replaces the checklist.
+    const oldTasks = await ctx.db
+      .query("visitTasks")
+      .withIndex("by_visit", (q) => q.eq("visitId", args.visitId))
+      .take(100);
+    for (const t of oldTasks) await ctx.db.delete("visitTasks", t._id);
+    for (let i = 0; i < args.tasks.length; i++) {
+      await ctx.db.insert("visitTasks", {
+        visitId: args.visitId,
+        appointmentId: appointment._id,
+        patientId: appointment.patientId,
+        ...args.tasks[i],
+        order: i,
+        done: false,
+      });
+    }
     await ctx.db.patch("visits", args.visitId, {
       summaryEnglish: args.summaryEnglish,
       summaryPatientLang: args.summaryPatientLang,
+      unaddressedSymptoms: args.unaddressedSymptoms,
       status: "summarized",
     });
     return null;

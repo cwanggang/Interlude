@@ -52,15 +52,32 @@ export type CheckinExtraction = {
   questions_for_doctor: { text_original: string; text_english: string }[];
 };
 
-/** SPEC.md "Visit summary JSON (D3)". */
+export type TimeOfDay = "morning" | "midday" | "evening" | "bedtime";
+export type MedicationChange = "new" | "changed" | "same" | "stopped";
+
+/** SPEC.md "Visit summary JSON v2". key, times_of_day, change, source_turn match across languages. */
 export type VisitSummary = {
   assessment: string;
-  medications: { name: string; dose: string; schedule: string; purpose: string }[];
-  instructions: string[];
-  tests_ordered: string[];
+  medications: {
+    key: string;
+    name: string;
+    dose: string;
+    schedule: string;
+    times_of_day: TimeOfDay[];
+    purpose: string;
+    change: MedicationChange;
+    source_turn: number | null;
+  }[];
+  instructions: { text: string; source_turn: number | null }[];
+  tests_ordered: { text: string; source_turn: number | null }[];
   follow_up: string;
   warning_signs: string[];
 };
+
+export type VisitTaskKind = "prescription" | "follow_up" | "test" | "other";
+
+/** After-visit checklist items (G11), written to visitTasks, not stored in the summary. */
+export type VisitTaskDraft = { kind: VisitTaskKind; textEnglish: string; textPatientLang: string };
 
 const nullableString = { type: ["string", "null"] };
 
@@ -254,10 +271,73 @@ Rules:
   }));
 }
 
+const sourcedText = {
+  type: "object",
+  additionalProperties: false,
+  required: ["text", "source_turn"],
+  properties: {
+    text: { type: "string" },
+    source_turn: { type: ["integer", "null"], description: "index of the transcript turn it came from" },
+  },
+};
+
 const summarySchema = {
   type: "object",
   additionalProperties: false,
-  required: ["assessment", "medications", "instructions", "tests_ordered", "follow_up", "warning_signs"],
+  required: [
+    "assessment", "medications", "instructions", "tests_ordered", "follow_up", "warning_signs", "tasks",
+  ],
+  properties: {
+    assessment: { type: "string" },
+    medications: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["key", "name", "dose", "schedule", "times_of_day", "purpose", "change", "source_turn"],
+        properties: {
+          key: { type: "string", description: "lowercase English generic name, e.g. metformin" },
+          name: { type: "string" },
+          dose: { type: "string" },
+          schedule: { type: "string" },
+          times_of_day: {
+            type: "array",
+            items: { type: "string", enum: ["morning", "midday", "evening", "bedtime"] },
+          },
+          purpose: { type: "string" },
+          change: { type: "string", enum: ["new", "changed", "same", "stopped"] },
+          source_turn: { type: ["integer", "null"] },
+        },
+      },
+    },
+    instructions: { type: "array", items: sourcedText },
+    tests_ordered: { type: "array", items: sourcedText },
+    follow_up: { type: "string" },
+    warning_signs: { type: "array", items: { type: "string" } },
+    tasks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "text"],
+        properties: {
+          kind: { type: "string", enum: ["prescription", "follow_up", "test", "other"] },
+          text: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+// The patient-language pass rewrites only the text, in the same order; code keeps the structure,
+// so key, times_of_day, change and source_turn can't drift between the two versions.
+const strings = { type: "array", items: { type: "string" } };
+const rewriteSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "assessment", "medications", "instructions", "tests_ordered", "follow_up", "warning_signs", "tasks",
+  ],
   properties: {
     assessment: { type: "string" },
     medications: {
@@ -274,38 +354,114 @@ const summarySchema = {
         },
       },
     },
-    instructions: { type: "array", items: { type: "string" } },
-    tests_ordered: { type: "array", items: { type: "string" } },
+    instructions: strings,
+    tests_ordered: strings,
     follow_up: { type: "string" },
-    warning_signs: { type: "array", items: { type: "string" } },
+    warning_signs: strings,
+    tasks: strings,
   },
+};
+
+type EnglishPass = VisitSummary & { tasks: { kind: VisitTaskKind; text: string }[] };
+type RewritePass = {
+  assessment: string;
+  medications: { name: string; dose: string; schedule: string; purpose: string }[];
+  instructions: string[];
+  tests_ordered: string[];
+  follow_up: string;
+  warning_signs: string[];
+  tasks: string[];
 };
 
 const transcriptText = (turns: { speaker: string; textEnglish: string }[]) =>
   turns.map((t) => `${t.speaker}: ${t.textEnglish}`).join("\n");
 
-/** D3: English summary, then a plain-reading-level patient-language version. */
+/** Turns prefixed with their index, so Claude can cite source_turn. */
+const numberedTranscript = (turns: { speaker: string; textEnglish: string }[]) =>
+  turns.map((t, i) => `[${i}] ${t.speaker}: ${t.textEnglish}`).join("\n");
+
+/**
+ * D3: English summary (VisitSummary v2) plus the after-visit tasks, then a plain-reading-level
+ * patient-language rewrite. `priorMedications` are keys the patient was on before this visit,
+ * so `change` can say new / changed / same / stopped.
+ */
 export async function summarizeVisit(
   transcript: { speaker: string; textEnglish: string }[],
   patientLanguage: string,
-): Promise<{ english: VisitSummary; patientLang: VisitSummary }> {
-  const english = await structured<VisitSummary>({
+  priorMedications: string[] = [],
+): Promise<{ english: VisitSummary; patientLang: VisitSummary; tasks: VisitTaskDraft[] }> {
+  const pass = await structured<EnglishPass>({
     effort: "medium",
-    system: `You summarize a doctor visit for the patient's record. Use only what the doctor said in the transcript; never add advice, doses, or tests that weren't stated. Leave a field empty ("" or []) if the visit didn't cover it.
+    system: `You summarize a doctor visit for the patient's record. Use only what the doctor said in the transcript; never add advice, doses, or tests that weren't stated. Leave a field empty ("" or []) if the visit didn't cover it. Each transcript line starts with its turn index in brackets.
 - assessment: the doctor's assessment in two or three sentences.
-- medications: every medication the patient should take after this visit, including unchanged ones the doctor mentioned. dose and schedule exactly as stated; purpose in a few words, only if the doctor gave it or it is unambiguous.
-- instructions: what the patient should do, one item each.
-- tests_ordered, follow_up, warning_signs: as stated by the doctor.`,
-    user: transcriptText(transcript),
+- medications: every medication the patient should take after this visit, including unchanged ones the doctor mentioned, plus any the doctor stopped. key is the lowercase English generic name ("metformin"). dose and schedule exactly as stated. times_of_day: when each dose is taken (morning, midday, evening, bedtime), e.g. "twice a day with breakfast and dinner" is ["morning","evening"]; [] if not said. purpose in a few words, only if the doctor gave it or it is unambiguous. change compared with the medications before the visit: new, changed (dose or timing), same, or stopped.
+- instructions: what the patient should do, one item each. tests_ordered: each test the doctor ordered.
+- source_turn: the index of the turn the item came from (the doctor's statement), or null.
+- follow_up, warning_signs: as stated by the doctor.
+- tasks: concrete to-dos for the patient after the visit, one each: pick up each new or changed prescription (kind prescription), book the follow-up (follow_up), get each ordered test (test), anything else the doctor asked them to arrange (other). Short imperative phrases.`,
+    user: `Medications before this visit: ${priorMedications.join(", ") || "unknown"}\n\nTranscript:\n${numberedTranscript(transcript)}`,
     schema: summarySchema,
   });
-  const patientLang = await structured<VisitSummary>({
+  const { tasks: taskPass, ...english } = pass;
+
+  const lang = languageName(patientLanguage);
+  const rewrite =
+    patientLanguage === "en"
+      ? null
+      : await structured<RewritePass>({
+          effort: "low",
+          system: `Rewrite this visit summary for the patient in ${lang}, at a plain reading level (short sentences, everyday words, about a 5th-grade level). Write each medication name the way it is spelled in ${lang} (for Spanish: "Metformin" → "Metformina", "Glipizide" → "Glipizida"). Keep every dose, number and schedule exactly, and write doses with units patients see on the bottle ("2.5 mg"); write schedules in everyday terms (for example "con el desayuno"). Return the same number of items in every list, in the same order. Do not add or drop anything.`,
+          user: JSON.stringify({ ...english, tasks: taskPass.map((t) => t.text) }),
+          schema: rewriteSchema,
+        });
+
+  // Fall back to the English text for any item the rewrite didn't return.
+  const patientLang: VisitSummary = rewrite
+    ? {
+        assessment: rewrite.assessment || english.assessment,
+        medications: english.medications.map((m, i) => ({ ...m, ...rewrite.medications[i] })),
+        instructions: english.instructions.map((it, i) => ({
+          ...it,
+          text: rewrite.instructions[i] ?? it.text,
+        })),
+        tests_ordered: english.tests_ordered.map((it, i) => ({
+          ...it,
+          text: rewrite.tests_ordered[i] ?? it.text,
+        })),
+        follow_up: rewrite.follow_up || english.follow_up,
+        warning_signs: english.warning_signs.map((w, i) => rewrite.warning_signs[i] ?? w),
+      }
+    : english;
+  const tasks = taskPass.map((t, i) => ({
+    kind: t.kind,
+    textEnglish: t.text,
+    textPatientLang: rewrite?.tasks[i] ?? t.text,
+  }));
+  return { english, patientLang, tasks };
+}
+
+/**
+ * D5: which symptoms the patient reported since the previous visit were never discussed in
+ * this one. Returns symptom keys from `symptoms`.
+ */
+export async function findUnaddressedSymptoms(
+  symptoms: { symptom: string; symptomOriginal: string }[],
+  transcript: { speaker: string; textEnglish: string }[],
+): Promise<string[]> {
+  if (symptoms.length === 0) return [];
+  const result = await structured<{ not_discussed: string[] }>({
     effort: "low",
-    system: `Rewrite this visit summary for the patient in ${languageName(patientLanguage)}, at a plain reading level (short sentences, everyday words, about a 5th-grade level). Keep every medication name, dose, number and schedule exactly; write schedules in everyday terms (for example "con el desayuno"). Do not add or drop anything. Keep the same JSON fields.`,
-    user: JSON.stringify(english),
-    schema: summarySchema,
+    system: `A patient reported symptoms in daily check-ins before this doctor visit. List the symptom keys that were never discussed in the visit transcript: neither the doctor nor the patient mentioned the symptom or something clearly the same (for example "shaky spells" covers "dizziness" when they describe the same episodes). Return only keys from the given list, exactly as written.`,
+    user: `Symptoms (key: patient's words):\n${symptoms.map((s) => `${s.symptom}: ${s.symptomOriginal}`).join("\n")}\n\nTranscript:\n${transcriptText(transcript)}`,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["not_discussed"],
+      properties: { not_discussed: { type: "array", items: { type: "string" } } },
+    },
   });
-  return { english, patientLang };
+  const keys = new Set(symptoms.map((s) => s.symptom));
+  return [...new Set(result.not_discussed)].filter((k) => keys.has(k));
 }
 
 export type QuestionCoverage = { id: string; answered: boolean; evidence: string | null };
