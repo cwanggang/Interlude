@@ -1,42 +1,255 @@
 // TRACK A owns this file. The one post-call pipeline (SPEC.md Key decision 2):
-// poll Get Call → Claude record_checkin → write Convex → internal.elastic.indexCheckin.
+// poll Get Call → Claude extraction → write Convex → internal.elastic.indexCheckin → processed.
 // Also the inserts behind the red-flag and add-question webhooks.
-// STUB: validators are the contract; bodies are fake.
 import { v } from "convex/values";
-import { internalAction, internalMutation } from "./_generated/server";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { getCall } from "./cartesia";
+import { extractCheckin, type CheckinExtraction } from "./claude";
+import { POLL_MS, currentAppointment, localDate } from "./calls";
+
+/** 15 s × 80 = 20 minutes, well past the 2-minute check-in. */
+const MAX_POLLS = 80;
+
+const conversationStatus = v.union(
+  v.literal("dialing"),
+  v.literal("in_progress"),
+  v.literal("ended"),
+  v.literal("processed"),
+  v.literal("failed"),
+);
+
+const transcriptValidator = v.array(v.object({ role: v.string(), text: v.string() }));
 
 /** Polls Cartesia every 15 s until the call ends, then schedules processConversation. */
 export const pollCall = internalAction({
   args: { conversationId: v.id("conversations"), attempt: v.number() },
   returns: v.null(),
-  handler: async (_ctx, args) => {
-    console.log("[stub] pipeline.pollCall", args.conversationId, args.attempt);
+  handler: async (ctx, args) => {
+    const conversation = await ctx.runQuery(internal.pipeline.getConversation, {
+      conversationId: args.conversationId,
+    });
+    if (!conversation?.cartesiaCallId) return null;
+    if (conversation.status !== "dialing" && conversation.status !== "in_progress") return null;
+
+    let call;
+    try {
+      call = await getCall(conversation.cartesiaCallId);
+    } catch (error) {
+      console.warn(`[pipeline] poll ${args.attempt} for ${args.conversationId} errored:`, error);
+      call = null;
+    }
+
+    if (call?.status === "ended") {
+      console.log(
+        `[pipeline] call ended (${call.endReason}), ${call.transcript.length} turns; processing`,
+      );
+      await ctx.runMutation(internal.pipeline.saveTranscript, {
+        conversationId: args.conversationId,
+        transcript: call.transcript,
+      });
+      await ctx.scheduler.runAfter(0, internal.pipeline.processConversation, {
+        conversationId: args.conversationId,
+      });
+      return null;
+    }
+    if (call?.status === "failed" || args.attempt + 1 >= MAX_POLLS) {
+      console.warn(`[pipeline] call ${args.conversationId} failed: ${call?.endReason ?? "timeout"}`);
+      await ctx.runMutation(internal.pipeline.setStatus, {
+        conversationId: args.conversationId,
+        status: "failed",
+      });
+      return null;
+    }
+    if (call?.status === "in_progress" && conversation.status === "dialing") {
+      await ctx.runMutation(internal.pipeline.setStatus, {
+        conversationId: args.conversationId,
+        status: "in_progress",
+      });
+    }
+    await ctx.scheduler.runAfter(POLL_MS, internal.pipeline.pollCall, {
+      conversationId: args.conversationId,
+      attempt: args.attempt + 1,
+    });
     return null;
   },
 });
 
-/** Transcript → Claude extraction → saveExtraction → index each entry in Elastic. */
+/** Transcript → Claude extraction → saveExtraction → index each entry in Elastic → processed. */
 export const processConversation = internalAction({
   args: { conversationId: v.id("conversations") },
   returns: v.null(),
-  handler: async (_ctx, args) => {
-    console.log("[stub] pipeline.processConversation", args.conversationId);
+  handler: async (ctx, args) => {
+    const conversation = await ctx.runQuery(internal.pipeline.getConversation, args);
+    if (!conversation || conversation.status !== "ended") return null;
+    const transcript = conversation.transcript ?? [];
+
+    // No answer, voicemail, or an explainer call: nothing to extract.
+    if (conversation.mode !== "checkin" || !transcript.some((t) => t.role === "user")) {
+      console.log(`[pipeline] ${args.conversationId}: nothing to extract; marking processed`);
+      await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "processed" });
+      return null;
+    }
+
+    const started = Date.now();
+    let extraction: CheckinExtraction;
+    try {
+      extraction = await extractCheckin(
+        transcript,
+        conversation.language,
+        conversation.activeSymptoms,
+      );
+    } catch (error) {
+      console.error(`[pipeline] Claude extraction failed for ${args.conversationId}:`, error);
+      await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "failed" });
+      return null;
+    }
+    console.log(
+      `[pipeline] Claude extracted ${extraction.symptoms.length} symptoms, ` +
+        `${extraction.medications.length} medications, ` +
+        `${extraction.questions_for_doctor.length} questions in ${Date.now() - started} ms`,
+    );
+
+    const entryIds = await ctx.runMutation(internal.pipeline.saveExtraction, {
+      conversationId: args.conversationId,
+      extraction,
+    });
+
+    // Index before marking processed: the dashboard refetches the timeline on that change.
+    const entries = await ctx.runQuery(internal.pipeline.getEntries, { entryIds });
+    for (const entry of entries) {
+      try {
+        await ctx.runAction(internal.elastic.indexCheckin, {
+          symptomEntryId: entry._id,
+          patientId: entry.patientId,
+          appointmentId: entry.appointmentId,
+          conversationId: entry.conversationId,
+          date: entry.date,
+          symptom: entry.symptom,
+          severity: entry.severity,
+          change: entry.change,
+          language: conversation.language,
+          quoteOriginal: entry.quoteOriginal,
+          quoteEnglish: entry.quoteEnglish,
+        });
+      } catch (error) {
+        // Convex stays the source of truth; elastic.reindexAll can repair the index later.
+        console.error(`[pipeline] indexCheckin failed for ${entry._id}:`, error);
+      }
+    }
+    console.log(`[pipeline] indexed ${entries.length} entries in Elastic`);
+
+    await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "processed" });
+    console.log(`[pipeline] ${args.conversationId} processed`);
     return null;
   },
 });
 
-/** Writes symptomEntries, medicationEvents, questions; marks the conversation processed. */
+/**
+ * Writes symptomEntries, medicationEvents, questions and the summary. Does not mark the
+ * conversation processed; processConversation does that after indexing in Elastic.
+ */
 export const saveExtraction = internalMutation({
   args: {
     conversationId: v.id("conversations"),
     extraction: v.any(), // CheckinExtraction from claude.ts
   },
   returns: v.array(v.id("symptomEntries")),
-  handler: async (): Promise<Id<"symptomEntries">[]> => {
-    return [];
+  handler: async (ctx, args): Promise<Id<"symptomEntries">[]> => {
+    const conversation = await ctx.db.get("conversations", args.conversationId);
+    if (!conversation) throw new Error("Conversation not found");
+    const patient = await ctx.db.get("patients", conversation.patientId);
+    if (!patient) throw new Error("Patient not found");
+    const extraction = args.extraction as CheckinExtraction;
+    const date = localDate(conversation.startedAt, patient.timezone);
+    const opt = (s: string | null | undefined) => s ?? undefined;
+
+    const ids: Id<"symptomEntries">[] = [];
+    for (const s of extraction.symptoms) {
+      const severity =
+        typeof s.severity === "number" ? Math.min(10, Math.max(0, Math.round(s.severity))) : undefined;
+      ids.push(
+        await ctx.db.insert("symptomEntries", {
+          patientId: conversation.patientId,
+          appointmentId: conversation.appointmentId,
+          conversationId: conversation._id,
+          date,
+          symptom: s.symptom.trim().toLowerCase(),
+          symptomOriginal: s.symptom_original,
+          severity,
+          change: opt(s.change),
+          onset: opt(s.onset),
+          location: opt(s.location),
+          duration: opt(s.duration),
+          character: opt(s.character),
+          aggravating: opt(s.aggravating),
+          relieving: opt(s.relieving),
+          timing: opt(s.timing),
+          quoteOriginal: s.quote_original,
+          quoteEnglish: s.quote_english,
+        }),
+      );
+    }
+
+    for (const m of extraction.medications) {
+      await ctx.db.insert("medicationEvents", {
+        patientId: conversation.patientId,
+        conversationId: conversation._id,
+        date,
+        medication: m.medication,
+        action: m.action,
+        note: opt(m.note),
+      });
+    }
+
+    for (const q of extraction.questions_for_doctor) {
+      await insertVoiceQuestion(ctx, conversation.patientId, conversation.appointmentId, {
+        textOriginal: q.text_original,
+        textEnglish: q.text_english,
+      });
+    }
+
+    await ctx.db.patch("conversations", conversation._id, {
+      summaryEnglish: extraction.summary_english,
+    });
+    return ids;
   },
 });
+
+/**
+ * Appends an open "voice" question unless the same text is already on the list (the
+ * add-question webhook and post-call extraction often capture the same question).
+ * Returns the new ID, or null for a duplicate.
+ */
+async function insertVoiceQuestion(
+  ctx: MutationCtx,
+  patientId: Id<"patients">,
+  appointmentId: Id<"appointments">,
+  text: { textOriginal: string; textEnglish: string },
+): Promise<Id<"questions"> | null> {
+  const existing = await ctx.db
+    .query("questions")
+    .withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId))
+    .take(200);
+  const norm = (s: string) => s.trim().toLowerCase().replace(/[¿?¡!.,]/g, "");
+  if (existing.some((q) => norm(q.textOriginal) === norm(text.textOriginal))) return null;
+  const order = existing.reduce((max, q) => Math.max(max, q.order), -1) + 1;
+  return await ctx.db.insert("questions", {
+    patientId,
+    appointmentId,
+    textOriginal: text.textOriginal,
+    textEnglish: text.textEnglish,
+    source: "voice",
+    status: "open",
+    order,
+  });
+}
 
 /** B7: from POST /cartesia/red-flag. */
 export const createAlert = internalMutation({
@@ -47,7 +260,35 @@ export const createAlert = internalMutation({
     cartesiaCallId: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async () => {
+  handler: async (ctx, args) => {
+    // Link the alert to the live call: by call ID if Cartesia sent it, else the patient's
+    // most recent call that hasn't finished.
+    let conversationId: Id<"conversations"> | undefined;
+    if (args.cartesiaCallId) {
+      const c = await ctx.db
+        .query("conversations")
+        .withIndex("by_call", (q) => q.eq("cartesiaCallId", args.cartesiaCallId))
+        .first();
+      conversationId = c?._id;
+    }
+    if (!conversationId) {
+      const recent = await ctx.db
+        .query("conversations")
+        .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+        .order("desc")
+        .take(5);
+      conversationId = recent.find((c) => c.status === "dialing" || c.status === "in_progress")
+        ?._id;
+    }
+    await ctx.db.insert("alerts", {
+      patientId: args.patientId,
+      conversationId,
+      symptom: args.symptom,
+      quote: args.quote,
+      createdAt: Date.now(),
+      acknowledged: false,
+    });
+    console.log(`[pipeline] RED FLAG for ${args.patientId}: ${args.symptom}`);
     return null;
   },
 });
@@ -56,7 +297,110 @@ export const createAlert = internalMutation({
 export const addVoiceQuestion = internalMutation({
   args: { patientId: v.id("patients"), question: v.string() },
   returns: v.null(),
-  handler: async () => {
+  handler: async (ctx, args) => {
+    const patient = await ctx.db.get("patients", args.patientId);
+    const appointment = await currentAppointment(ctx, args.patientId);
+    if (!patient || !appointment) return null;
+    const questionId = await insertVoiceQuestion(ctx, args.patientId, appointment._id, {
+      textOriginal: args.question,
+      textEnglish: args.question,
+    });
+    if (questionId && patient.language !== "en") {
+      await ctx.scheduler.runAfter(0, internal.claude.translateQuestion, { questionId });
+    }
+    return null;
+  },
+});
+
+// ---- Small reads and writes for the actions above ----
+
+export const getConversation = internalQuery({
+  args: { conversationId: v.id("conversations") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      status: conversationStatus,
+      mode: v.union(v.literal("checkin"), v.literal("explainer")),
+      language: v.string(),
+      cartesiaCallId: v.optional(v.string()),
+      transcript: v.optional(transcriptValidator),
+      activeSymptoms: v.array(v.string()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const c = await ctx.db.get("conversations", args.conversationId);
+    if (!c) return null;
+    const recent = await ctx.db
+      .query("symptomEntries")
+      .withIndex("by_patient_date", (q) => q.eq("patientId", c.patientId))
+      .order("desc")
+      .take(50);
+    return {
+      status: c.status,
+      mode: c.mode,
+      language: c.language,
+      cartesiaCallId: c.cartesiaCallId,
+      transcript: c.transcript,
+      activeSymptoms: [...new Set(recent.map((e) => e.symptom))],
+    };
+  },
+});
+
+export const getEntries = internalQuery({
+  args: { entryIds: v.array(v.id("symptomEntries")) },
+  returns: v.array(
+    v.object({
+      _id: v.id("symptomEntries"),
+      patientId: v.id("patients"),
+      appointmentId: v.id("appointments"),
+      conversationId: v.id("conversations"),
+      date: v.string(),
+      symptom: v.string(),
+      severity: v.optional(v.number()),
+      change: v.optional(v.string()),
+      quoteOriginal: v.string(),
+      quoteEnglish: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const rows = [];
+    for (const id of args.entryIds) {
+      const e = await ctx.db.get("symptomEntries", id);
+      if (!e) continue;
+      rows.push({
+        _id: e._id,
+        patientId: e.patientId,
+        appointmentId: e.appointmentId,
+        conversationId: e.conversationId,
+        date: e.date,
+        symptom: e.symptom,
+        severity: e.severity,
+        change: e.change,
+        quoteOriginal: e.quoteOriginal,
+        quoteEnglish: e.quoteEnglish,
+      });
+    }
+    return rows;
+  },
+});
+
+export const saveTranscript = internalMutation({
+  args: { conversationId: v.id("conversations"), transcript: transcriptValidator },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch("conversations", args.conversationId, {
+      transcript: args.transcript,
+      status: "ended",
+    });
+    return null;
+  },
+});
+
+export const setStatus = internalMutation({
+  args: { conversationId: v.id("conversations"), status: conversationStatus },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch("conversations", args.conversationId, { status: args.status });
     return null;
   },
 });
