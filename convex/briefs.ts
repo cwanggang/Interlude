@@ -5,6 +5,24 @@ import { internalMutation, query } from "./_generated/server";
 
 const source = v.union(v.literal("elastic_workflow"), v.literal("fallback"), v.literal("seed"));
 
+// H8: overview, reported concerns and topics for review, each item citing the patient's words.
+export const briefItem = v.object({
+  text: v.string(),
+  citations: v.array(
+    v.object({
+      symptomEntryId: v.optional(v.string()),
+      date: v.string(),
+      quoteOriginal: v.string(),
+      quoteEnglish: v.string(),
+    }),
+  ),
+});
+export const briefSections = v.object({
+  overview: v.string(),
+  concerns: v.array(briefItem),
+  topics: v.array(briefItem),
+});
+
 const briefDoc = v.object({
   _id: v.id("briefs"),
   _creationTime: v.number(),
@@ -13,6 +31,7 @@ const briefDoc = v.object({
   textEnglish: v.string(),
   createdAt: v.number(),
   source,
+  sections: v.optional(briefSections), // Schema v2, written from block B5
 });
 const maybeBrief = v.union(v.null(), briefDoc);
 

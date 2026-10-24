@@ -4,62 +4,100 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
-import { Badge, Button, Card, ListItem, Text, TextField } from '../../components'
+import { Badge, Banner, Button, Card, ListItem, SidePanel, Text, TextField } from '../../components'
 import { formatDateTime, formatDay } from '../../format'
 
 type SymptomEntry = FunctionReturnType<typeof api.patients.symptomEntries>[number]
 
 const HISTORY_FIELDS = ['onset', 'location', 'duration', 'character', 'aggravating', 'relieving', 'timing'] as const
 
-/** C8: unacknowledged red flags with an acknowledge button. Renders nothing when clear. */
-export function Alerts({ patientId }: { patientId: Id<'patients'> }) {
+type Brief = NonNullable<FunctionReturnType<typeof api.briefs.getByAppointment>>
+type BriefItem = NonNullable<Brief['sections']>['concerns'][number]
+
+/** H7 / C8: red-flag banner for the sticky header strip. Renders nothing when clear. */
+export function AlertBanner({ patientId }: { patientId: Id<'patients'> }) {
   const alerts = useQuery(api.alerts.listForPatient, { patientId })
   const acknowledge = useMutation(api.alerts.acknowledge)
   const open = alerts?.filter((a) => !a.acknowledged) ?? []
-  if (open.length === 0) return null
   return (
-    <Card title="Red-flag alerts" tone="danger">
+    <>
       {open.map((a) => (
-        <ListItem
-          key={a._id}
-          title={<><Badge tone="danger">{a.symptom}</Badge> “{a.quote}”</>}
-          subtitle={formatDateTime(a.createdAt)}
-          trailing={<Button onClick={() => void acknowledge({ alertId: a._id })}>Acknowledge</Button>}
-        />
+        <Banner key={a._id} actions={<Button variant="secondary" onClick={() => void acknowledge({ alertId: a._id })}>Acknowledge</Button>}>
+          <strong>Red flag: {a.symptom}</strong> · “{a.quote}”
+          {a.quoteEnglish && a.quoteEnglish !== a.quote && <> ({a.quoteEnglish})</>} · {formatDateTime(a.createdAt)}
+        </Banner>
       ))}
-    </Card>
+    </>
   )
 }
 
-/** C9: pre-visit brief from the Elastic Workflow, with a button to regenerate it. */
+/**
+ * H8 / C9: the pre-visit summary from the Elastic Workflow. With `sections`, an overview plus
+ * concerns and topics whose citations open the patient's own words; otherwise the paragraph.
+ */
 export function Brief({ patientId, appointmentId }: { patientId: Id<'patients'>; appointmentId: Id<'appointments'> }) {
   const brief = useQuery(api.briefs.getByAppointment, { appointmentId })
   const generate = useAction(api.elastic.generateBrief)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const onGenerate = async () => {
     setBusy(true)
+    setError(null)
     try {
       await generate({ patientId, appointmentId })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
     }
   }
   return (
     <Card
-      title="Pre-visit brief"
+      title="Pre-visit summary"
       actions={<Button variant="secondary" disabled={busy} onClick={() => void onGenerate()}>{busy ? 'Generating…' : 'Generate brief'}</Button>}
     >
       {brief === undefined && <Text variant="muted">Loading…</Text>}
       {brief === null && <Text variant="muted">No brief yet.</Text>}
+      {error && <Text variant="muted">Couldn't generate the brief: {error}</Text>}
       {brief && (
         <>
-          <Text>{brief.textEnglish}</Text>
+          <Text>{brief.sections?.overview ?? brief.textEnglish}</Text>
+          {brief.sections && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+              <BriefItems title="Reported concerns" items={brief.sections.concerns} />
+              <BriefItems title="Topics for review" items={brief.sections.topics} />
+            </div>
+          )}
           <Text variant="muted">
             {formatDateTime(brief.createdAt)} · {brief.source === 'elastic_workflow' ? 'Elastic Workflow' : brief.source}
           </Text>
         </>
       )}
     </Card>
+  )
+}
+
+/** Each AI-written line links to its source: click to show the cited quotes. */
+function BriefItems({ title, items }: { title: string; items: BriefItem[] }) {
+  const [open, setOpen] = useState<number | null>(null)
+  if (items.length === 0) return null
+  return (
+    <div>
+      <Text variant="heading">{title}</Text>
+      {items.map((item, i) => (
+        <div key={i}>
+          <ListItem
+            title={item.text}
+            onClick={item.citations.length ? () => setOpen(open === i ? null : i) : undefined}
+            trailing={item.citations.length > 0 && <Badge>{item.citations.length} source{item.citations.length === 1 ? '' : 's'}</Badge>}
+          />
+          {open === i &&
+            item.citations.map((c, j) => (
+              <ListItem key={j} title={<Text variant="quote">“{c.quoteOriginal}”</Text>} subtitle={<>{c.quoteEnglish}<br />{formatDay(c.date)}</>} />
+            ))}
+        </div>
+      ))}
+    </div>
   )
 }
 
@@ -105,21 +143,21 @@ export function HistoryCards({ entries }: { entries: SymptomEntry[] }) {
   )
 }
 
-/** C4: patient quotes, original with English underneath; filtered to the clicked timeline day. */
-export function Quotes({ entries, date }: { entries: SymptomEntry[]; date: string | null }) {
-  const shown = date ? entries.filter((e) => e.date === date) : entries.slice(0, 10)
+/** C4 / H9: side panel with the clicked timeline day's quotes, original with English underneath. */
+export function QuotesPanel({ entries, date, onClose }: { entries: SymptomEntry[]; date: string; onClose: () => void }) {
+  const shown = entries.filter((e) => e.date === date)
   return (
-    <Card title={date ? `Quotes · ${formatDay(date)}` : 'Recent quotes'}>
-      {shown.length === 0 && <Text variant="muted">No quotes{date ? ' for this day' : ''}.</Text>}
+    <SidePanel title={`Quotes · ${formatDay(date)}`} onClose={onClose}>
+      {shown.length === 0 && <Text variant="muted">No check-in this day.</Text>}
       {shown.map((e) => (
         <ListItem
           key={e._id}
           title={<Text variant="quote">“{e.quoteOriginal}”</Text>}
-          subtitle={<>{e.quoteEnglish}<br />{formatDay(e.date)} · {e.symptom}</>}
+          subtitle={<>{e.quoteEnglish}<br />{e.symptom}{e.change && ` · ${e.change}`}</>}
           trailing={e.severity !== undefined && <Badge>{e.severity}/10</Badge>}
         />
       ))}
-    </Card>
+    </SidePanel>
   )
 }
 

@@ -47,3 +47,9 @@ export function age(dateOfBirth: string, now: number): number {
   const birthdayPassed = today.getMonth() + 1 > m || (today.getMonth() + 1 === m && today.getDate() >= d)
   return today.getFullYear() - y - (birthdayPassed ? 0 : 1)
 }
+
+/** Local calendar day of a timestamp, "2026-10-24" (the shape formatDay takes). */
+export function isoDay(ms: number): string {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
