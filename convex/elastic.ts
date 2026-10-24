@@ -6,7 +6,9 @@
 // Read ELASTIC.md before implementing anything here (Jina, hybrid search, Agent Builder, Workflows).
 import { Client } from "@elastic/elasticsearch";
 import { v, type Infer } from "convex/values";
-import { action, internalAction } from "./_generated/server";
+import { action, internalAction, type ActionCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import type { FunctionReturnType } from "convex/server";
 import { api, internal } from "./_generated/api";
 
 // Verified on our project with `npx convex run elastic:diagnose`; see elastic/NOTES.md.
@@ -242,7 +244,123 @@ function splitCitations(message: string): { answer: string; citations: { date?: 
   }
 }
 
-/** Creates or updates this deployment's Agent Builder tools and agent. Run after ensureIndices. */
+// ---- Workflows (C9 pre-visit brief) ----
+// generateBrief runs the Workflow and saves its output itself, so no Convex HTTP route is needed.
+
+/** Kibana derives a workflow's id from its name; keep the name hyphenated so the id is predictable. */
+function workflowId(): string {
+  return `${(process.env.ELASTIC_INDEX_PREFIX ?? "").replace(/_/g, "-")}pre-visit-brief`;
+}
+
+function workflowYaml(): string {
+  return `version: "1"
+name: ${workflowId()}
+description: Writes a short pre-visit brief for one patient with the patient-record agent.
+enabled: true
+triggers:
+  - type: manual
+inputs:
+  - name: patient_id
+    type: string
+    required: true
+  - name: appointment_id
+    type: string
+    required: true
+  - name: questions
+    type: string
+    required: false
+steps:
+  - name: write_brief
+    type: ai.agent
+    agent-id: ${agentId()}
+    with:
+      message: >-
+        Patient ID: {{ inputs.patient_id }}. Appointment ID: {{ inputs.appointment_id }}.
+        Write a pre-visit brief for the doctor in one paragraph of at most 110 words, using only
+        the daily check-ins (not visit passages): symptom trends with dates, glucose readings,
+        medication changes or missed doses, and red flags. End with the patient's open questions,
+        which are: {{ inputs.questions }}
+`;
+}
+
+async function syncWorkflow(): Promise<void> {
+  const id = workflowId();
+  const existing = await kibana(`/api/workflows/workflow/${id}`);
+  const res = existing.ok
+    ? await kibana(`/api/workflows/workflow/${id}`, { method: "PUT", body: JSON.stringify({ yaml: workflowYaml() }) })
+    : await kibana("/api/workflows", { method: "POST", body: JSON.stringify({ workflows: [{ yaml: workflowYaml() }] }) });
+  if (!res.ok) throw new Error(`syncWorkflow ${id}: ${res.status} ${await res.text()}`);
+  if (!existing.ok) {
+    const created = (await res.json()) as { created?: { id: string }[] };
+    if (created.created?.[0]?.id !== id) {
+      throw new Error(`syncWorkflow: Kibana created id ${created.created?.[0]?.id}, expected ${id}`);
+    }
+  }
+}
+
+/** Runs the Workflow and waits for the agent step's message (up to ~2 minutes). */
+async function runBriefWorkflow(inputs: Record<string, string>): Promise<string> {
+  const run = await kibana(`/api/workflows/workflow/${workflowId()}/run`, {
+    method: "POST",
+    body: JSON.stringify({ inputs }),
+  });
+  if (!run.ok) throw new Error(`workflow run: ${run.status} ${await run.text()}`);
+  const { workflowExecutionId } = (await run.json()) as { workflowExecutionId: string };
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const res = await kibana(`/api/workflows/executions/${workflowExecutionId}?includeOutput=true`);
+    if (!res.ok) continue;
+    const execution = (await res.json()) as {
+      status: string;
+      stepExecutions?: { stepId: string; output?: { message?: string } }[];
+    };
+    if (execution.status === "completed") {
+      const message = execution.stepExecutions?.find((s) => s.stepId === "write_brief")?.output?.message;
+      if (!message) throw new Error(`workflow ${workflowExecutionId} completed without a brief`);
+      return message;
+    }
+    if (["failed", "cancelled", "timed_out"].includes(execution.status)) {
+      throw new Error(`workflow ${workflowExecutionId} ${execution.status}`);
+    }
+  }
+  throw new Error(`workflow ${workflowExecutionId} still running after 2 minutes`);
+}
+
+/** Writes and saves a brief for one appointment: the Workflow first, the agent directly as fallback. */
+async function writeBrief(
+  ctx: ActionCtx,
+  patientId: Id<"patients">,
+  appointmentId: Id<"appointments">,
+): Promise<void> {
+  const questions = await ctx.runQuery(api.questions.listForAppointment, { appointmentId });
+  const openQuestions =
+    questions
+      .filter((q) => q.status === "open")
+      .map((q) => q.textEnglish)
+      .join("; ") || "none";
+  let message: string;
+  let source: "elastic_workflow" | "fallback" = "elastic_workflow";
+  try {
+    message = await runBriefWorkflow({
+      patient_id: patientId,
+      appointment_id: appointmentId,
+      questions: openQuestions,
+    });
+  } catch (e) {
+    console.warn("elastic.generateBrief: workflow failed, calling the agent directly", e);
+    source = "fallback";
+    ({ message } = await converse(
+      `Patient ID: ${patientId}. Appointment ID: ${appointmentId}. Write a pre-visit brief for the doctor ` +
+        `in one paragraph of at most 110 words, using only the daily check-ins: symptom trends with dates, ` +
+        `glucose readings, medication changes or missed doses, and red flags. End with the patient's open ` +
+        `questions, which are: ${openQuestions}`,
+    ));
+  }
+  const { answer } = splitCitations(message);
+  await ctx.runMutation(internal.briefs.save, { patientId, appointmentId, textEnglish: answer, source });
+}
+
+/** Creates or updates this deployment's Agent Builder tools, agent, and pre-visit-brief Workflow. */
 export const syncAgent = internalAction({
   args: {},
   returns: v.object({ agentId: v.string(), tools: v.array(v.string()) }),
@@ -267,6 +385,7 @@ export const syncAgent = internalAction({
       ? await kibana(`/api/agent_builder/agents/${id}`, { method: "PUT", body: JSON.stringify(agent) })
       : await kibana("/api/agent_builder/agents", { method: "POST", body: JSON.stringify({ id, ...agent }) });
     if (!res.ok) throw new Error(`syncAgent agent ${id}: ${res.status} ${await res.text()}`);
+    await syncWorkflow();
     return { agentId: id, tools: tools.map((t) => t.id) };
   },
 });
@@ -638,17 +757,33 @@ export const askRecord = action({
 });
 
 /**
- * C9 "Generate brief" button: fires the pre-visit-brief Workflow for this appointment. The
- * Workflow posts back to /elastic/previsit-brief, so the result arrives through
- * briefs.getByAppointment. If Workflows is unavailable, calls the agent directly and writes
- * through internal.briefs.save with source "fallback".
+ * C9 "Generate brief" button: runs the pre-visit-brief Elastic Workflow for this appointment and
+ * saves the result; the card updates through briefs.getByAppointment. Takes 20-40 seconds.
  */
 export const generateBrief = action({
   args: { patientId: v.id("patients"), appointmentId: v.id("appointments") },
   returns: v.null(),
-  handler: async (_ctx, args) => {
-    console.log("[stub] elastic.generateBrief", args.appointmentId);
+  handler: async (ctx, args) => {
+    await writeBrief(ctx, args.patientId, args.appointmentId);
     return null;
+  },
+});
+
+/**
+ * For a daily cron (crons.ts is Track A's): a brief for every appointment in the next 24 hours.
+ * crons.cron("pre-visit briefs", "0 14 * * *", internal.elastic.generateBriefsForUpcoming, {})
+ */
+export const generateBriefsForUpcoming = internalAction({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx): Promise<number> => {
+    const now = Date.now();
+    const rows: FunctionReturnType<typeof api.patients.list> = await ctx.runQuery(api.patients.list, {});
+    const due = rows.filter(
+      (r) => r.nextAppointment && r.nextAppointment.scheduledAt - now < 24 * 60 * 60 * 1000,
+    );
+    for (const r of due) await writeBrief(ctx, r.patient._id, r.nextAppointment!._id);
+    return due.length;
   },
 });
 
@@ -674,7 +809,10 @@ export const reindexAll = internalAction({
     for (const base of ["checkins", "visit_chunks"] as const) {
       await es().deleteByQuery({ index: indexName(base), query: { match_all: {} }, refresh: true });
     }
-    const entries = await ctx.runQuery(internal.patients.symptomEntriesForIndex, {});
+    const entries: FunctionReturnType<typeof internal.patients.symptomEntriesForIndex> = await ctx.runQuery(
+      internal.patients.symptomEntriesForIndex,
+      {},
+    );
     if (entries.length === 0) return null;
     const index = indexName("checkins");
     const response = await es().bulk({

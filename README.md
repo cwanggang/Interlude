@@ -51,8 +51,6 @@ ELASTIC_URL                     Serverless Elasticsearch endpoint
 ELASTIC_API_KEY
 KIBANA_URL                      Agent Builder and Workflows APIs
 ELASTIC_INDEX_PREFIX            per deployment: a_, b_, prod_
-ELASTIC_AGENT_ID                Agent Builder agent ID
-ELASTIC_WEBHOOK_SECRET          sent by the pre-visit-brief Workflow
 DEMO_PHONE                      optional default phone for the seed
 ```
 
@@ -60,4 +58,12 @@ DEMO_PHONE                      optional default phone for the seed
 
 Cartesia webhook tools point at `https://<deployment>.convex.site/cartesia/{red-flag,add-question,search-visit}` with header `x-webhook-secret: $CARTESIA_WEBHOOK_SECRET`.
 
-The Elastic `pre-visit-brief` Workflow posts to `https://<deployment>.convex.site/elastic/previsit-brief` with header `x-webhook-secret: $ELASTIC_WEBHOOK_SECRET`. See `ELASTIC.md`.
+Elastic setup per deployment (after setting the `ELASTIC_*` vars):
+
+```bash
+npx convex run elastic:ensureIndices '{"reset":true}'
+npm run seed
+npx convex run elastic:syncAgent   # Agent Builder tools + agent, and the pre-visit-brief Workflow
+```
+
+See `ELASTIC.md` and `elastic/NOTES.md`.

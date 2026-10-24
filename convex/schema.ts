@@ -105,8 +105,8 @@ export default defineSchema({
     status: v.string(), // uploaded | transcribed | summarized
   }).index("by_appointment", ["appointmentId"]),
 
-  // C9 pre-visit brief, written by the Elastic Workflow (via POST /elastic/previsit-brief)
-  // or by the Convex fallback in elastic.generateBrief
+  // C9 pre-visit brief, written by elastic.generateBrief from the Elastic Workflow's output
+  // (or the direct-agent fallback)
   briefs: defineTable({
     patientId: v.id("patients"),
     appointmentId: v.id("appointments"),

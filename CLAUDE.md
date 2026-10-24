@@ -20,7 +20,6 @@ Do not change the args or return validators of these without both devs agreeing.
 | `internal.elastic.reindexAll` | B | the seed |
 | `internal.elastic.indexVisitChunks` | B | A's visit processing |
 | `internal.elastic.searchVisit` | B | A's `/cartesia/search-visit` |
-| `internal.briefs.save` | B | A's `POST /elastic/previsit-brief` (checks `ELASTIC_WEBHOOK_SECRET`) |
 | `internal.claude.translateQuestion` | A | B's `questions.add` (non-English typed questions) |
 | `api.calls.triggerNow`, `api.calls.getConversation` | A | B's "Call me now" button |
 | `api.calls.getAccessToken` | A | A's voice client |
