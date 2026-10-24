@@ -23,6 +23,11 @@ export const theme = {
   },
   /** Avatar circle: teal to blue. */
   avatarGradient: 'linear-gradient(135deg, #5ee3e3 0%, #7fa7ff 100%)',
+  /** The patient's avatar on the live visit: lavender to blue. */
+  patientGradient: 'linear-gradient(135deg, #c8b9ff 0%, #7fa7ff 100%)',
+  /** Big call-to-action (Start recording, Upload visit, Read aloud). */
+  ctaGradient: 'linear-gradient(90deg, #cbbdff 0%, #6c8cff 100%)',
+  overlay: 'rgba(13,42,58,0.55)',
   // One color per symptom line, in order of first appearance.
   chart: ['#087d8d', '#6c8cff', '#ff8a73', '#14a3b8', '#b4462f', '#3e7fd6'],
   font: {
