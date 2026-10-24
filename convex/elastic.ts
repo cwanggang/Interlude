@@ -1,11 +1,163 @@
 "use node";
-// TRACK B owns this file. STUB: validators are the contract; bodies are fake.
+// TRACK B owns this file. Validators are the contract; functions still marked [stub] are fake.
 // indexCheckin, indexVisitChunks and searchVisit are called by Track A; changing
 // their args or returns needs agreement from both devs.
 // Index names are prefixed with ELASTIC_INDEX_PREFIX (a_, b_, prod_).
 // Read ELASTIC.md before implementing anything here (Jina, hybrid search, Agent Builder, Workflows).
+import { Client } from "@elastic/elasticsearch";
 import { v, type Infer } from "convex/values";
 import { action, internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
+
+// Verified on our project with `npx convex run elastic:diagnose`; see elastic/NOTES.md.
+const EMBEDDING_ID = ".jina-embeddings-v5-text-small";
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing Convex env var ${name}`);
+  return value;
+}
+
+let client: Client | undefined;
+function es(): Client {
+  client ??= new Client({
+    node: requireEnv("ELASTIC_URL"),
+    auth: { apiKey: requireEnv("ELASTIC_API_KEY") },
+  });
+  return client;
+}
+
+/** Calls a Kibana API (Agent Builder, Workflows) with the same API key. */
+async function kibana(path: string, init: RequestInit = {}): Promise<Response> {
+  return await fetch(`${requireEnv("KIBANA_URL")}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `ApiKey ${requireEnv("ELASTIC_API_KEY")}`,
+      "kbn-xsrf": "true",
+      "Content-Type": "application/json",
+      ...init.headers,
+    },
+  });
+}
+
+function indexName(base: "checkins" | "visit_chunks"): string {
+  return `${process.env.ELASTIC_INDEX_PREFIX ?? ""}${base}`;
+}
+
+const MAPPINGS = {
+  checkins: {
+    properties: {
+      symptom_entry_id: { type: "keyword" },
+      patient_id: { type: "keyword" },
+      appointment_id: { type: "keyword" },
+      conversation_id: { type: "keyword" },
+      date: { type: "date" },
+      symptom: { type: "keyword" },
+      severity: { type: "integer" },
+      change: { type: "keyword" },
+      language: { type: "keyword" },
+      quote_original: { type: "text", copy_to: "quote_semantic" },
+      quote_english: { type: "text" },
+      quote_semantic: { type: "semantic_text", inference_id: EMBEDDING_ID },
+    },
+  },
+  visit_chunks: {
+    properties: {
+      patient_id: { type: "keyword" },
+      appointment_id: { type: "keyword" },
+      chunk_index: { type: "integer" },
+      speakers: { type: "keyword" },
+      text_english: { type: "text", copy_to: "content" },
+      text_patient_lang: { type: "text" },
+      content: { type: "semantic_text", inference_id: EMBEDDING_ID },
+    },
+  },
+} as const;
+
+/** Creates missing indices; with reset, deletes and recreates them. */
+async function ensure(reset = false): Promise<void> {
+  for (const base of ["checkins", "visit_chunks"] as const) {
+    const index = indexName(base);
+    const exists = await es().indices.exists({ index });
+    if (exists && !reset) continue;
+    if (exists) await es().indices.delete({ index });
+    await es().indices.create({ index, mappings: MAPPINGS[base] });
+  }
+}
+
+// Actions reuse warm Node processes, so this skips the exists checks after the first call.
+let ensured = false;
+async function ensureOnce(): Promise<void> {
+  if (ensured) return;
+  await ensure();
+  ensured = true;
+}
+
+type CheckinArgs = {
+  symptomEntryId: string;
+  patientId: string;
+  appointmentId: string;
+  conversationId: string;
+  date: string;
+  symptom: string;
+  severity?: number;
+  change?: string;
+  language: string;
+  quoteOriginal: string;
+  quoteEnglish: string;
+};
+
+function checkinDoc(a: CheckinArgs) {
+  return {
+    symptom_entry_id: a.symptomEntryId,
+    patient_id: a.patientId,
+    appointment_id: a.appointmentId,
+    conversation_id: a.conversationId,
+    date: a.date,
+    symptom: a.symptom,
+    severity: a.severity ?? null,
+    change: a.change ?? null,
+    language: a.language,
+    quote_original: a.quoteOriginal,
+    quote_english: a.quoteEnglish,
+  };
+}
+
+/** Setup check: cluster info, inference endpoints (for the Jina IDs), and Kibana reachability. */
+export const diagnose = internalAction({
+  args: { query: v.optional(v.string()) },
+  returns: v.any(),
+  handler: async (_ctx, args) => {
+    if (args.query) {
+      // Raw semantic query on checkins, to check embeddings independent of searchCheckins.
+      const res = await es().search<{ quote_original: string; date: string }>({
+        index: indexName("checkins"),
+        size: 3,
+        query: { semantic: { field: "quote_semantic", query: args.query } },
+        _source: ["quote_original", "date"],
+      });
+      const counts = await Promise.all(
+        (["checkins", "visit_chunks"] as const).map(async (b) => [b, (await es().count({ index: indexName(b) })).count]),
+      );
+      return { counts: Object.fromEntries(counts), hits: res.hits.hits.map((h) => ({ score: h._score, ...h._source })) };
+    }
+    const info = await es().info();
+    const inference = (await es().transport.request({ method: "GET", path: "/_inference/_all" })) as {
+      endpoints?: { inference_id: string; task_type: string; service: string; service_settings?: { model_id?: string } }[];
+    };
+    const agents = await kibana("/api/agent_builder/agents");
+    return {
+      cluster: { name: info.cluster_name, version: info.version.number, flavor: info.version.build_flavor },
+      inference: (inference.endpoints ?? []).map((e) => ({
+        id: e.inference_id,
+        task: e.task_type,
+        service: e.service,
+        model: e.service_settings?.model_id,
+      })),
+      kibanaAgentBuilder: agents.status,
+    };
+  },
+});
 
 export const visitPassage = v.object({
   chunkIndex: v.number(),
@@ -38,7 +190,13 @@ export const indexCheckin = internalAction({
   },
   returns: v.null(),
   handler: async (_ctx, args) => {
-    console.log("[stub] elastic.indexCheckin", args.symptomEntryId, args.symptom);
+    await ensureOnce();
+    await es().index({
+      index: indexName("checkins"),
+      id: args.symptomEntryId,
+      document: checkinDoc(args),
+      refresh: "wait_for",
+    });
     return null;
   },
 });
@@ -59,7 +217,30 @@ export const indexVisitChunks = internalAction({
   },
   returns: v.null(),
   handler: async (_ctx, args) => {
-    console.log("[stub] elastic.indexVisitChunks", args.appointmentId, args.chunks.length);
+    await ensureOnce();
+    const index = indexName("visit_chunks");
+    // Reprocessing a visit may produce fewer chunks, so replace the appointment's set wholesale.
+    await es().deleteByQuery({
+      index,
+      query: { term: { appointment_id: args.appointmentId } },
+      refresh: true,
+    });
+    if (args.chunks.length === 0) return null;
+    const response = await es().bulk({
+      refresh: "wait_for",
+      operations: args.chunks.flatMap((c) => [
+        { index: { _index: index, _id: `${args.appointmentId}-${c.chunkIndex}` } },
+        {
+          patient_id: args.patientId,
+          appointment_id: args.appointmentId,
+          chunk_index: c.chunkIndex,
+          speakers: c.speakers,
+          text_english: c.textEnglish,
+          text_patient_lang: c.textPatientLang,
+        },
+      ]),
+    });
+    if (response.errors) throw new Error(`indexVisitChunks: bulk errors for ${args.appointmentId}`);
     return null;
   },
 });
@@ -175,7 +356,7 @@ export const ensureIndices = internalAction({
   args: { reset: v.optional(v.boolean()) },
   returns: v.null(),
   handler: async (_ctx, args) => {
-    console.log("[stub] elastic.ensureIndices", args.reset ?? false);
+    await ensure(args.reset ?? false);
     return null;
   },
 });
@@ -187,8 +368,23 @@ export const ensureIndices = internalAction({
 export const reindexAll = internalAction({
   args: {},
   returns: v.null(),
-  handler: async () => {
-    console.log("[stub] elastic.reindexAll");
+  handler: async (ctx) => {
+    await ensureOnce();
+    for (const base of ["checkins", "visit_chunks"] as const) {
+      await es().deleteByQuery({ index: indexName(base), query: { match_all: {} }, refresh: true });
+    }
+    const entries = await ctx.runQuery(internal.patients.symptomEntriesForIndex, {});
+    if (entries.length === 0) return null;
+    const index = indexName("checkins");
+    const response = await es().bulk({
+      refresh: "wait_for",
+      operations: entries.flatMap((e) => [{ index: { _index: index, _id: e.symptomEntryId } }, checkinDoc(e)]),
+    });
+    if (response.errors) {
+      const first = response.items.find((i) => i.index?.error)?.index?.error;
+      throw new Error(`reindexAll: bulk errors, first: ${first?.type}: ${first?.reason}`);
+    }
+    console.log("elastic.reindexAll indexed", entries.length);
     return null;
   },
 });
