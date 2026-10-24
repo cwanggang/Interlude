@@ -27,6 +27,8 @@ function textOf(message: Anthropic.Message): string {
 /** Output of the record_checkin schema (SPEC.md "Extraction tool"). */
 export type CheckinExtraction = {
   summary_english: string;
+  /** v2: the same summary in the call's language, for the patient app (G1, G18). */
+  summary_patient_lang: string;
   symptoms: {
     symptom: string;
     symptom_original: string;
@@ -67,9 +69,12 @@ const nullableString = { type: ["string", "null"] };
 const checkinSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["summary_english", "symptoms", "medications", "questions_for_doctor"],
+  required: [
+    "summary_english", "summary_patient_lang", "symptoms", "medications", "questions_for_doctor",
+  ],
   properties: {
     summary_english: { type: "string" },
+    summary_patient_lang: { type: "string" },
     symptoms: {
       type: "array",
       items: {
@@ -106,7 +111,7 @@ const checkinSchema = {
         additionalProperties: false,
         required: ["medication", "action", "note"],
         properties: {
-          medication: { type: "string" },
+          medication: { type: "string", description: "lowercase English generic name, e.g. metformin" },
           action: { type: "string", enum: ["started", "stopped", "taken", "missed"] },
           note: nullableString,
         },
@@ -128,14 +133,15 @@ const EXTRACTION_PROMPT = `You turn a phone check-in between a health assistant 
 
 Rules:
 - Only record what the patient said. Never infer a severity number they did not give; use null.
-- symptom is a normalized English key, lowercase, singular (e.g. "dizziness", "thirst", "fatigue", "frequent urination", "foot tingling", "shakiness"). Reuse the keys from the active symptoms list when the patient talks about the same thing.
+- symptom is a normalized English key, lowercase, singular (e.g. "dizziness", "thirst", "fatigue", "frequent urination", "foot tingling", "shakiness"). The active symptoms list gives each existing key with the patient's words for it; when the patient talks about the same thing (even in different words), reuse that key exactly instead of making a new one.
 - symptom_original is the patient's own word for it, in their language.
 - quote_original is the patient's exact words about that symptom; quote_english is its English translation (identical if the call was in English).
 - change is better/worse/same relative to the last check-in, "new" for a symptom not reported before, or null if unclear.
 - A glucose reading goes in the timing or character field of the related symptom, or in summary_english if no symptom fits. Mention every number the patient gave in summary_english.
-- medications: started/stopped/taken/missed, only when the patient said so.
+- medications: started/stopped/taken/missed, only when the patient said so. medication is the lowercase English generic name, one word where possible ("metformina" → "metformin", "glipizida" → "glipizide", "Glucophage" → "metformin"), so every report of a drug lands under one key. Put dose and timing in note.
 - questions_for_doctor: questions the patient wants to ask their doctor, in their words and in English.
-- summary_english: two or three plain sentences a doctor can read in ten seconds.`;
+- summary_english: two or three plain sentences a doctor can read in ten seconds.
+- summary_patient_lang: the same facts in the call language (identical to summary_english for English calls), in plain words the patient reads on their phone. Report what the patient said ("thirst a little better" is fine if they said so); never add your own judgment ("improving", "worrying") or advice.`;
 
 export async function extractCheckin(
   transcript: { role: string; text: string }[],
