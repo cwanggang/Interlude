@@ -85,6 +85,7 @@ const conversationRow = v.object({
   status: v.string(),
   startedAt: v.number(),
   summaryEnglish: v.optional(v.string()),
+  summaryPatientLang: v.optional(v.string()), // v2, G18
 });
 
 /** C1: patient list with next appointment and open alert count. */
@@ -209,6 +210,7 @@ export const conversations = query({
       status: c.status,
       startedAt: c.startedAt,
       summaryEnglish: c.summaryEnglish,
+      summaryPatientLang: c.summaryPatientLang,
     }));
   },
 });
