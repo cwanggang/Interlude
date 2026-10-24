@@ -1,7 +1,8 @@
 // SHARED FILE. Dev A approves changes.
 // Demo data: one Spanish-speaking patient, one upcoming appointment, and SEED_DAYS
 // days of processed check-in calls (today's comes from the live demo call).
-// Run with `npm run seed` (wraps `npx convex run seed:run`). Wipes every table first.
+// Run with `npm run seed` (wraps `npx convex run seed:run`). Wipes every table first, then
+// schedules elastic.reindexAll so the Elastic indices match Convex (no stale duplicates).
 // Pass a real US phone for live calls: npx convex run seed:run '{"phone":"+15025550123"}'
 import type { MutationCtx } from "../convex/_generated/server";
 import type { TableNames } from "../convex/_generated/dataModel";
@@ -12,6 +13,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = "America/Los_Angeles";
 
 const TABLES: TableNames[] = [
+  "briefs",
   "alerts",
   "questions",
   "medicationEvents",
@@ -307,25 +309,12 @@ export async function seed(ctx: MutationCtx, args: { phone?: string }) {
     });
 
     for (const s of day.symptoms) {
-      const symptomEntryId = await ctx.db.insert("symptomEntries", {
+      await ctx.db.insert("symptomEntries", {
         patientId,
         appointmentId,
         conversationId,
         date,
         ...s,
-      });
-      await ctx.scheduler.runAfter(0, internal.elastic.indexCheckin, {
-        symptomEntryId,
-        patientId,
-        appointmentId,
-        conversationId,
-        date,
-        symptom: s.symptom,
-        severity: s.severity,
-        change: s.change,
-        language: "es",
-        quoteOriginal: s.quoteOriginal,
-        quoteEnglish: s.quoteEnglish,
       });
     }
 
@@ -343,6 +332,21 @@ export async function seed(ctx: MutationCtx, args: { phone?: string }) {
       order: i,
     });
   }
+
+  // Placeholder so the brief card has data before the Workflow runs; "Generate brief" replaces it.
+  await ctx.db.insert("briefs", {
+    patientId,
+    appointmentId,
+    textEnglish:
+      "Spanish-speaking patient with 2 weeks of positional dizziness, worsening from 4/10 to 6/10, " +
+      "now with nausea during spells and a near-fall in the kitchen. Headache improved on ibuprofen " +
+      "(one missed dose). Open questions: cause of dizziness on standing; whether to continue ibuprofen.",
+    createdAt: now,
+    source: "seed",
+  });
+
+  // Runs after this mutation commits, so it sees every row inserted above.
+  await ctx.scheduler.runAfter(0, internal.elastic.reindexAll, {});
 
   return { patientId, appointmentId };
 }
