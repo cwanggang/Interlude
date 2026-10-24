@@ -50,7 +50,16 @@ export type CheckinExtraction = {
     note?: string | null;
   }[];
   questions_for_doctor: { text_original: string; text_english: string }[];
+  /** A6: every blood-sugar number the patient gave (doctor chart only). */
+  glucose_readings: {
+    value_mg_dl: number;
+    context: GlucoseContext;
+    quote_original: string;
+    quote_english: string;
+  }[];
 };
+
+export type GlucoseContext = "fasting" | "before_meal" | "after_meal" | "bedtime" | "unknown";
 
 /** SPEC.md "Visit summary JSON (D3)". */
 export type VisitSummary = {
@@ -71,6 +80,7 @@ const checkinSchema = {
   additionalProperties: false,
   required: [
     "summary_english", "summary_patient_lang", "symptoms", "medications", "questions_for_doctor",
+    "glucose_readings",
   ],
   properties: {
     summary_english: { type: "string" },
@@ -126,6 +136,23 @@ const checkinSchema = {
         properties: { text_original: { type: "string" }, text_english: { type: "string" } },
       },
     },
+    glucose_readings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["value_mg_dl", "context", "quote_original", "quote_english"],
+        properties: {
+          value_mg_dl: { type: "integer" },
+          context: {
+            type: "string",
+            enum: ["fasting", "before_meal", "after_meal", "bedtime", "unknown"],
+          },
+          quote_original: { type: "string" },
+          quote_english: { type: "string" },
+        },
+      },
+    },
   },
 };
 
@@ -138,6 +165,7 @@ Rules:
 - quote_original is the patient's exact words about that symptom; quote_english is its English translation (identical if the call was in English).
 - change is better/worse/same relative to the last check-in, "new" for a symptom not reported before, or null if unclear.
 - A glucose reading goes in the timing or character field of the related symptom, or in summary_english if no symptom fits. Mention every number the patient gave in summary_english.
+- glucose_readings: one item per blood-sugar number the patient gave, in mg/dL as a whole number (if they gave mmol/L, multiply by 18). context: fasting (on waking or before breakfast), before_meal (before lunch or dinner), after_meal, bedtime (at night or before sleep), or unknown. quote_original is their exact words with the number; quote_english its translation. Never invent or estimate a number; an empty list if they gave none.
 - medications: started/stopped/taken/missed, only when the patient said so. medication is the lowercase English generic name, one word where possible ("metformina" → "metformin", "glipizida" → "glipizide", "Glucophage" → "metformin"), so every report of a drug lands under one key. Put dose and timing in note.
 - questions_for_doctor: questions the patient wants to ask their doctor, in their words and in English.
 - summary_english: two or three plain sentences a doctor can read in ten seconds.

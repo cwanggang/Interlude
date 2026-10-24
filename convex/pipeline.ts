@@ -223,6 +223,23 @@ export const saveExtraction = internalMutation({
       });
     }
 
+    // A6: glucose readings for the doctor's chart. Values outside 20-700 mg/dL are dropped as
+    // mishearings (the number is still in summaryEnglish).
+    for (const g of extraction.glucose_readings ?? []) {
+      const value = Math.round(g.value_mg_dl);
+      if (!(value >= 20 && value <= 700)) continue;
+      await ctx.db.insert("glucoseReadings", {
+        patientId: conversation.patientId,
+        appointmentId: conversation.appointmentId,
+        conversationId: conversation._id,
+        date,
+        valueMgDl: value,
+        context: g.context,
+        quoteOriginal: g.quote_original,
+        quoteEnglish: g.quote_english,
+      });
+    }
+
     for (const q of extraction.questions_for_doctor) {
       await insertVoiceQuestion(ctx, conversation.patientId, conversation.appointmentId, {
         textOriginal: q.text_original,
