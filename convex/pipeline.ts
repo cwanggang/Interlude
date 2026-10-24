@@ -296,14 +296,19 @@ export const createAlert = internalMutation({
       conversationId = recent.find((c) => c.status === "dialing" || c.status === "in_progress")
         ?._id;
     }
-    await ctx.db.insert("alerts", {
+    const patient = await ctx.db.get("patients", args.patientId);
+    const english = !patient || patient.language === "en";
+    const alertId = await ctx.db.insert("alerts", {
       patientId: args.patientId,
       conversationId,
       symptom: args.symptom,
       quote: args.quote,
+      // H3: the doctor sees the quote in English. Non-English quotes are translated just after.
+      quoteEnglish: english ? args.quote : undefined,
       createdAt: Date.now(),
       acknowledged: false,
     });
+    if (!english) await ctx.scheduler.runAfter(0, internal.claude.translateAlert, { alertId });
     console.log(`[pipeline] RED FLAG for ${args.patientId}: ${args.symptom}`);
     return null;
   },
