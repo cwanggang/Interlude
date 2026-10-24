@@ -1,9 +1,8 @@
 // B8 visit prep: the open questions in both languages, large, to show the doctor.
 import { useQuery } from 'convex/react';
-import { Stack } from 'expo-router';
 
 import { api } from '../../../../convex/_generated/api';
-import { Card, Screen, Text } from '../components';
+import { Card, Screen, ScreenTitle, Text } from '../components';
 import { usePatient } from '../usePatient';
 
 export default function Prep() {
@@ -13,7 +12,7 @@ export default function Prep() {
 
   return (
     <Screen>
-      <Stack.Screen options={{ title: s.prepTitle }} />
+      <ScreenTitle title={s.prepTitle} />
       <Text variant="muted">{s.prepHint}</Text>
       {questions === undefined && appointment !== null && <Text>{s.loading}</Text>}
       {questions && open.length === 0 && <Text variant="muted">{s.noQuestions}</Text>}
