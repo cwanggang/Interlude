@@ -320,62 +320,72 @@ export const getCallContext = internalQuery({
     const patient = await ctx.db.get("patients", conversation.patientId);
     const appointment = await ctx.db.get("appointments", conversation.appointmentId);
     if (!patient || !appointment) return null;
-
-    const vars: Record<string, string> = {
-      patient_id: patient._id,
-      appointment_id: appointment._id,
-      patient_name: patient.name,
-      language: patient.language === "es" ? "Spanish" : "English",
-      reason_for_visit: patient.reasonForVisit,
-      days_until_visit: String(
-        Math.max(0, Math.ceil((appointment.scheduledAt - args.now) / DAY_MS)),
-      ),
-    };
-
-    if (conversation.mode === "checkin") {
-      const recent = await ctx.db
-        .query("conversations")
-        .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
-        .order("desc")
-        .take(20);
-      const last = recent.find((c) => c.status === "processed" && c.summaryEnglish);
-      vars.last_checkin_summary = last?.summaryEnglish ?? "No previous check-in.";
-
-      // Active symptoms: anything reported in the last 3 days, latest severity first seen.
-      const since = localDate(args.now - 3 * DAY_MS, patient.timezone);
-      const entries = await ctx.db
-        .query("symptomEntries")
-        .withIndex("by_patient_date", (q) => q.eq("patientId", patient._id).gte("date", since))
-        .order("desc")
-        .take(100);
-      const latest = new Map<string, Doc<"symptomEntries">>();
-      for (const e of entries) if (!latest.has(e.symptom)) latest.set(e.symptom, e);
-      vars.active_symptoms =
-        [...latest.values()]
-          .map((e) =>
-            e.severity !== undefined
-              ? `${e.symptomOriginal} (${e.symptom}, ${e.severity}/10 on ${e.date})`
-              : `${e.symptomOriginal} (${e.symptom}, ${e.date})`,
-          )
-          .join("; ") || "None reported yet.";
-    } else {
-      const visit = await releasedVisit(ctx, appointment._id);
-      const summary = visit?.summaryPatientLang as
-        | { assessment?: string; medications?: { name: string; dose: string; schedule: string }[] }
-        | undefined;
-      vars.visit_summary_short = summary?.assessment ?? "";
-      vars.medications =
-        summary?.medications?.map((m) => `${m.name} ${m.dose}, ${m.schedule}`).join("; ") ?? "";
-    }
-
     return {
       mode: conversation.mode,
       language: patient.language,
       toPhone: patient.phone,
-      dynamicVariables: vars,
+      dynamicVariables: await agentVariables(ctx, conversation, patient, appointment, args.now),
     };
   },
 });
+
+/**
+ * The agent's per-conversation context (SPEC.md "Agents" dynamic variables), shared by phone
+ * calls and the text chat so both see the same patient, symptoms and visit.
+ */
+export async function agentVariables(
+  ctx: QueryCtx,
+  conversation: Doc<"conversations">,
+  patient: Doc<"patients">,
+  appointment: Doc<"appointments">,
+  now: number,
+): Promise<Record<string, string>> {
+  const vars: Record<string, string> = {
+    patient_id: patient._id,
+    appointment_id: appointment._id,
+    patient_name: patient.name,
+    language: patient.language === "es" ? "Spanish" : "English",
+    reason_for_visit: patient.reasonForVisit,
+    days_until_visit: String(Math.max(0, Math.ceil((appointment.scheduledAt - now) / DAY_MS))),
+  };
+
+  if (conversation.mode === "checkin") {
+    const recent = await ctx.db
+      .query("conversations")
+      .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+      .order("desc")
+      .take(20);
+    const last = recent.find((c) => c.status === "processed" && c.summaryEnglish);
+    vars.last_checkin_summary = last?.summaryEnglish ?? "No previous check-in.";
+
+    // Active symptoms: anything reported in the last 3 days, latest severity first seen.
+    const since = localDate(now - 3 * DAY_MS, patient.timezone);
+    const entries = await ctx.db
+      .query("symptomEntries")
+      .withIndex("by_patient_date", (q) => q.eq("patientId", patient._id).gte("date", since))
+      .order("desc")
+      .take(100);
+    const latest = new Map<string, Doc<"symptomEntries">>();
+    for (const e of entries) if (!latest.has(e.symptom)) latest.set(e.symptom, e);
+    vars.active_symptoms =
+      [...latest.values()]
+        .map((e) =>
+          e.severity !== undefined
+            ? `${e.symptomOriginal} (${e.symptom}, ${e.severity}/10 on ${e.date})`
+            : `${e.symptomOriginal} (${e.symptom}, ${e.date})`,
+        )
+        .join("; ") || "None reported yet.";
+  } else {
+    const visit = await releasedVisit(ctx, appointment._id);
+    const summary = visit?.summaryPatientLang as
+      | { assessment?: string; medications?: { name: string; dose: string; schedule: string }[] }
+      | undefined;
+    vars.visit_summary_short = summary?.assessment ?? "";
+    vars.medications =
+      summary?.medications?.map((m) => `${m.name} ${m.dose}, ${m.schedule}`).join("; ") ?? "";
+  }
+  return vars;
+}
 
 /** Builds dynamic variables, sends POST /agents/calls, stores the call ID, starts polling. */
 export const startCall = internalAction({

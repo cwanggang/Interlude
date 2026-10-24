@@ -672,7 +672,7 @@ The two tracks touch in only a few functions. The contract defines them on day o
 | `api.visits.latestReleasedSummary` (query) | A | B's Home and My Visit (G3, G5) | `{ patientId }` → `null \| { visitId, appointmentId, scheduledAt, doctorName, summaryEnglish, summaryPatientLang }` (VisitSummary v2) |
 | `internal.visits.reindexAllChunks` | A | the seed, after `elastic.reindexAll` | `{}` → `null`; re-indexes passages of every visit with a transcript |
 | `api.chat.start` (mutation) | A | B's chat screen (G16) | `{ patientId }` → `{ conversationId }`; picks check-in or explainer mode like `triggerNow` |
-| `api.chat.send` (mutation) | A | B's chat screen | `{ conversationId, text }` → `null`; inserts the user message and a `pending` assistant message, which Claude fills |
+| `api.chat.send` (mutation) | A | B's chat screen | `{ conversationId, text }` → `null`; inserts the user message and a `pending` assistant message, which Claude fills in a few seconds. Throws while the previous reply is still pending, so disable the send button until it arrives |
 | `api.chat.messages` (query) | A | B's chat screen | `{ conversationId }` → `[{ _id, role, text, createdAt, pending?, redFlag?, citations? }]`, oldest first |
 | `api.chat.end` (mutation) | A | B's chat close button | `{ conversationId }` → `null`; runs the post-call pipeline on the messages. Also runs after 10 idle minutes |
 | `api.chat.generateUploadUrl`, `api.chat.transcribeClip` (action) | A | B's chat mic | `{ storageId, language }` → `{ text }`, via Ink batch transcription |
@@ -795,7 +795,7 @@ to the v2 demo data, and update CLAUDE.md's tables. Don't implement features. Ty
 | A2 Visit v2 | P0 | `summarizeVisit` returns VisitSummary v2 plus tasks; write `visitTasks`; D5 `unaddressedSymptoms`; `release` sets `releasedAt`; `listForPatient`, `latestReleasedSummary`, `reindexAllChunks`; explainer `medications` variable built from v2 | G3, G5, G10–G12, H10, H12, H13 |
 | A3 Alert translation ✅ | P0 | `createAlert` schedules Claude into `quoteEnglish` | H3 |
 | A4 Brief cron ✅ | P1 | `crons.ts`: `internal.elastic.generateBriefsForUpcoming` daily at 14:00 UTC (7 AM Pacific). Needs `elastic:syncAgent` once per deployment | H8 freshness |
-| A5 Chat backend | P1 | `convex/chat.ts`: Claude with tools (`add_question`, `report_red_flag`, `search_visit` via `internal.elastic.searchVisit`); before-visit replies act like the check-in agent, after-visit replies answer only from passages and return `citations`; red flags create an alert and set `redFlag`; `end` feeds the messages to `processConversation`; `transcribeClip` via `transcribeFile` | G16, G17, F2 |
+| A5 Chat backend ✅ | P1 | `convex/chat.ts`: Claude with tools (`add_question`, `report_red_flag`, `search_visit` via `internal.elastic.searchVisit`); before-visit replies act like the check-in agent, after-visit replies answer only from passages and return `citations`; red flags create an alert and set `redFlag`; `end` feeds the messages to `processConversation`; `transcribeClip` via `transcribeFile` | G16, G17, F2 |
 | A6 Glucose | P1, if approved | Extraction `glucose_readings` → `glucoseReadings` rows | Doctor glucose chart |
 | A7 Voice + teach-back | P1 | Test E3 on a real explainer call; B4: `mintAccessToken`, `getAccessToken`, `useVoiceSession` on a dev build | B4 |
 

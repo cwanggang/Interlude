@@ -267,20 +267,21 @@ async function insertVoiceQuestion(
   });
 }
 
-/** B7: from POST /cartesia/red-flag. */
+/** B7: from POST /cartesia/red-flag, or the chat's report_red_flag tool (with conversationId). */
 export const createAlert = internalMutation({
   args: {
     patientId: v.id("patients"),
     symptom: v.string(),
     quote: v.string(),
     cartesiaCallId: v.optional(v.string()),
+    conversationId: v.optional(v.id("conversations")),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    // Link the alert to the live call: by call ID if Cartesia sent it, else the patient's
-    // most recent call that hasn't finished.
-    let conversationId: Id<"conversations"> | undefined;
-    if (args.cartesiaCallId) {
+    // Link the alert to the live call: given directly (chat), by call ID if Cartesia sent it,
+    // else the patient's most recent call that hasn't finished.
+    let conversationId: Id<"conversations"> | undefined = args.conversationId;
+    if (!conversationId && args.cartesiaCallId) {
       const c = await ctx.db
         .query("conversations")
         .withIndex("by_call", (q) => q.eq("cartesiaCallId", args.cartesiaCallId))
