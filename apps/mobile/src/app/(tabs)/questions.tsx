@@ -5,7 +5,7 @@ import { View } from 'react-native';
 
 import { api } from '../../../../../convex/_generated/api';
 import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
-import { Badge, Button, Card, Screen, ScreenTitle, Text, TextField } from '../../components';
+import { Badge, Button, Card, PageHeader, Screen, ScreenTitle, Text, TextField } from '../../components';
 import type { Strings } from '../../i18n';
 import { theme } from '../../theme';
 import { usePatient } from '../../usePatient';
@@ -19,7 +19,7 @@ export default function Questions() {
 
   if (!patient || !appointment) {
     return (
-      <Screen>
+      <Screen header={<PageHeader title={s.questionsTitle} />}>
         <ScreenTitle title={s.questionsTitle} />
         <Text>{patient === undefined || appointment === undefined ? s.loading : s.noVisit}</Text>
       </Screen>
@@ -40,7 +40,7 @@ export default function Questions() {
   };
 
   return (
-    <Screen>
+    <Screen header={<PageHeader title={s.questionsTitle} />}>
       <ScreenTitle title={s.questionsTitle} />
       <Card title={s.addQuestion}>
         <TextField value={draft} onChangeText={setDraft} placeholder={s.questionPlaceholder} multiline />

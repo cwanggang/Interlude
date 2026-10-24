@@ -1,0 +1,17 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Mascot &#194;&#183; hello">
+<g id="Frame">
+<path id="Vector" d="M22 2.64C32.12 2.2 40.92 9.68 41.36 20.68C41.8 31.68 34.76 41.8 22.44 41.8C10.12 41.8 2.64 33.88 2.64 22.44C2.64 11 11.88 3.08 22 2.64Z" fill="url(#paint0_linear_0_10)"/>
+</g>
+<ellipse id="Ellipse" cx="13.2" cy="9.9" rx="4.4" ry="2.42" fill="white" fill-opacity="0.5"/>
+<rect id="Rectangle" x="15.4" y="15.84" width="4.62" height="10.12" rx="2.2" fill="#0D2A3A"/>
+<rect id="Rectangle_2" x="24.64" y="15.84" width="4.62" height="10.12" rx="2.2" fill="#0D2A3A"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_10" x1="2.64" y1="2.62157" x2="41.8159" y2="41.3586" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+</defs>
+</svg>

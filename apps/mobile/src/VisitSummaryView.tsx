@@ -1,64 +1,131 @@
-// E1 / G10 / G11: one released visit in the patient's language. Medicines first, then what to
-// do, the after-visit checklist, tests, next steps, warning signs, and how each question went.
+// E1 / G10 / G11 (Figma 3.3): one released visit in the patient's language. Medications first, then
+// instructions, follow-up and tests, warning signs, how each question went, and the to-do list.
 import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { View } from 'react-native';
 
 import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
-import { Badge, Card, ListItem, Text } from './components';
+import { Card, CheckRow, Divider, Icon, IconCircle, SectionTitle, StatusChip, Text } from './components';
 import type { Language, Strings } from './i18n';
 import { theme } from './theme';
-import { itemText, summaryFor, type SummaryItem } from './visitSummary';
+import { itemText, summaryFor } from './visitSummary';
 
 type Visit = NonNullable<FunctionReturnType<typeof api.visits.getByAppointment>>;
 
 export function VisitSummaryView({ visit, language, s }: { visit: Visit; language: Language; s: Strings }) {
   const summary = summaryFor(visit, language);
   if (!summary) return null;
+  const tests = summary.tests_ordered ?? [];
   return (
     <>
-      <Card title={s.medications}>
-        {(summary.medications ?? []).map((m, i) => (
-          <ListItem
-            key={m.key ?? i}
-            title={<Text variant="heading">{`${m.name} ${m.dose}`}</Text>}
-            subtitle={
-              <>
-                <Text>{`${s.schedule}: ${m.schedule}`}</Text>
-                {m.purpose ? <Text variant="muted">{`${s.purpose}: ${m.purpose}`}</Text> : null}
-              </>
-            }
-          />
-        ))}
-      </Card>
-      {summary.assessment ? (
-        <Card>
-          <Text>{summary.assessment}</Text>
+      <SectionTitle title={s.medicationsTitle} />
+      {(summary.medications ?? []).map((m, i) => (
+        <Card key={m.key ?? i} gap={10}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <IconCircle name="pill-teal" size={40} iconSize={20} />
+            <View style={{ flex: 1 }}>
+              <Text variant="heading">{`${m.name} ${m.dose}`}</Text>
+            </View>
+            {m.change && m.change !== 'same' && (
+              <StatusChip label={s.changeLabels[m.change] ?? m.change} color={theme.color.danger} bg={theme.color.coralBg} />
+            )}
+          </View>
+          <LabeledLine label={s.whenLabel} value={m.schedule} />
+          {m.purpose ? <LabeledLine label={s.whatForLabel} value={m.purpose} /> : null}
         </Card>
-      ) : null}
-      <BulletCard title={s.instructions} items={summary.instructions ?? []} />
+      ))}
+
+      {(summary.instructions ?? []).length > 0 && (
+        <>
+          <SectionTitle title={s.instructionsTitle} />
+          <Card gap={10}>
+            {(summary.instructions ?? []).map((item, i) => (
+              <Text key={i}>{`•  ${itemText(item)}`}</Text>
+            ))}
+          </Card>
+        </>
+      )}
+
+      {(summary.follow_up || tests.length > 0) && (
+        <>
+          <SectionTitle title={s.followUpTests} />
+          <Card gap={12}>
+            {summary.follow_up ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <Icon name="cal-teal" size={20} />
+                <View style={{ flex: 1 }}>
+                  <Text>{summary.follow_up}</Text>
+                </View>
+              </View>
+            ) : null}
+            {tests.map((t, i) => (
+              <View key={i} style={{ gap: 12 }}>
+                {(summary.follow_up || i > 0) && <Divider />}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Icon name="file" size={20} />
+                  <View style={{ flex: 1 }}>
+                    <Text>{itemText(t)}</Text>
+                  </View>
+                </View>
+              </View>
+            ))}
+          </Card>
+        </>
+      )}
+
+      {(summary.warning_signs ?? []).length > 0 && (
+        <View style={{ backgroundColor: theme.color.coralBg, borderRadius: theme.radius.lg, padding: 20, gap: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Icon name="alert-22" size={22} />
+            <Text variant="heading" color={theme.color.danger}>{s.warningSignsTitle}</Text>
+          </View>
+          {(summary.warning_signs ?? []).map((w, i) => (
+            <Text key={i}>{`•  ${w}`}</Text>
+          ))}
+        </View>
+      )}
+
+      <QuestionOutcomes appointmentId={visit.appointmentId} language={language} s={s} />
       <Checklist visitId={visit._id} language={language} s={s} />
-      <BulletCard title={s.tests} items={summary.tests_ordered ?? []} />
-      {summary.follow_up ? (
-        <Card title={s.followUp}>
-          <Text>{summary.follow_up}</Text>
-        </Card>
-      ) : null}
-      <BulletCard title={s.warningSigns} items={summary.warning_signs ?? []} danger />
-      <QuestionOutcomes appointmentId={visit.appointmentId} s={s} />
     </>
   );
 }
 
-function BulletCard({ title, items, danger }: { title: string; items: SummaryItem[]; danger?: boolean }) {
-  if (!items.length) return null;
+function LabeledLine({ label, value }: { label: string; value: string }) {
   return (
-    <Card title={title} tone={danger ? 'danger' : 'neutral'}>
-      {items.map((item, i) => (
-        <Text key={i}>• {itemText(item)}</Text>
-      ))}
-    </Card>
+    <View style={{ flexDirection: 'row', gap: theme.space.sm, alignItems: 'flex-start' }}>
+      <Text variant="label">{label}</Text>
+      <View style={{ flex: 1 }}>
+        <Text>{value}</Text>
+      </View>
+    </View>
+  );
+}
+
+/** G10 / D4: each question from the queue, answered or carried over to the next visit. */
+function QuestionOutcomes({ appointmentId, language, s }: { appointmentId: Id<'appointments'>; language: Language; s: Strings }) {
+  const questions = useQuery(api.questions.listForAppointment, { appointmentId });
+  if (!questions?.length) return null;
+  return (
+    <>
+      <SectionTitle title={s.yourQuestions} />
+      <Card gap={0}>
+        {questions.map((q, i) => (
+          <View key={q._id}>
+            {i > 0 && <Divider />}
+            <View style={{ gap: theme.space.sm, paddingVertical: 14 }}>
+              <Text>{language === 'en' ? q.textEnglish : q.textOriginal}</Text>
+              {q.status === 'answered' ? (
+                <StatusChip label={s.answered} icon="check-green" color={theme.color.success} bg={theme.color.successBg} />
+              ) : (
+                <StatusChip label={s.carriedOverNext} icon="refresh-periwinkle" color={theme.color.periwinkle} bg={theme.color.periwinkleBg} />
+              )}
+            </View>
+          </View>
+        ))}
+      </Card>
+    </>
   );
 }
 
@@ -68,43 +135,35 @@ function Checklist({ visitId, language, s }: { visitId: Id<'visits'>; language: 
   const setDone = useMutation(api.tasks.setDone);
   if (!tasks?.length) return null;
   return (
-    <Card title={s.afterVisitTasks}>
-      {tasks.map((task) => (
-        <ListItem
-          key={task._id}
-          onPress={() => void setDone({ taskId: task._id, done: !task.done })}
-          title={
-            <View style={{ flexDirection: 'row', gap: theme.space.md, alignItems: 'center' }}>
-              <Text variant="heading">{task.done ? '☑' : '☐'}</Text>
-              <View style={{ flex: 1 }}>
-                <Text>{language === 'en' ? task.textEnglish : task.textPatientLang}</Text>
-              </View>
-            </View>
-          }
-        />
-      ))}
-    </Card>
+    <>
+      <SectionTitle title={s.todoTitle} />
+      <Card gap={0}>
+        {tasks.map((task, i) => (
+          <View key={task._id}>
+            {i > 0 && <Divider />}
+            <CheckRow
+              label={language === 'en' ? task.textEnglish : task.textPatientLang}
+              checked={task.done}
+              onToggle={() => void setDone({ taskId: task._id, done: !task.done })}
+            />
+          </View>
+        ))}
+      </Card>
+    </>
   );
 }
 
-/** G10 / D4: each question from the queue, answered or moved to the next visit. */
-function QuestionOutcomes({ appointmentId, s }: { appointmentId: Id<'appointments'>; s: Strings }) {
-  const questions = useQuery(api.questions.listForAppointment, { appointmentId });
-  if (!questions?.length) return null;
+/** 3.2 / 3.3: "Visit on October 20", doctor and clinic, and "Summary ready" once released. */
+export function VisitHeaderCard({ title, doctor, clinic, ready, s }: { title: string; doctor: string; clinic?: string; ready: boolean; s: Strings }) {
   return (
-    <Card title={s.yourQuestions}>
-      {questions.map((q) => (
-        <ListItem
-          key={q._id}
-          title={q.textOriginal}
-          trailing={
-            <Badge
-              tone={q.status === 'answered' ? 'success' : 'neutral'}
-              label={q.status === 'answered' ? s.answered : q.status === 'carried_over' ? s.movedToNext : s.notAnswered}
-            />
-          }
-        />
-      ))}
-    </Card>
+    <View style={{ backgroundColor: theme.color.surface, borderRadius: theme.radius.lg, padding: 22, gap: 4 }}>
+      <Text variant="pageTitle">{title}</Text>
+      <Text variant="muted">{s.doctorAndClinic(doctor, clinic)}</Text>
+      {ready && (
+        <View style={{ paddingTop: 8 }}>
+          <StatusChip label={s.summaryReady} icon="check-green" color={theme.color.success} bg={theme.color.successBg} />
+        </View>
+      )}
+    </View>
   );
 }

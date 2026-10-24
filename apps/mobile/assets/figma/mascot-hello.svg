@@ -1,0 +1,15 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Mascot &#194;&#183; Hello">
+<path id="Blob" d="M47.998 5.76181C70.0769 4.80183 89.276 21.1215 90.2359 45.121C91.1959 69.1205 75.8366 91.2 48.9579 91.2C22.0792 91.2 5.76 73.9204 5.76 48.9609C5.76 24.0014 25.919 6.72179 47.998 5.76181Z" fill="url(#paint0_linear_0_4)"/>
+<ellipse id="Shine" cx="28.8" cy="21.6" rx="9.6" ry="5.28" fill="white" fill-opacity="0.501961"/>
+<rect id="Eye" x="33.6" y="34.56" width="10.08" height="22.08" rx="5.04" fill="#0D2A3A"/>
+<rect id="Eye_2" x="53.76" y="34.56" width="10.08" height="22.08" rx="5.04" fill="#0D2A3A"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_4" x1="5.76" y1="5.7216" x2="91.2329" y2="90.2346" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+</defs>
+</svg>

@@ -17,6 +17,12 @@ const symptomSummary = v.object({
   quotes: v.array(v.object({ date: v.string(), quoteOriginal: v.string(), quoteEnglish: v.string() })),
   /** "What your doctor will see": whether the patient has described each of these yet. */
   reported: v.object({ onset: v.boolean(), timing: v.boolean(), relieving: v.boolean() }),
+  /** The most recent wording of each, in the patient's language as extracted ("2 weeks ago"). */
+  details: v.object({
+    onset: v.union(v.null(), v.string()),
+    timing: v.union(v.null(), v.string()),
+    relieving: v.union(v.null(), v.string()),
+  }),
 });
 
 const overviewResult = v.object({
@@ -89,6 +95,11 @@ export const overview = query({
           onset: list.some((e) => e.onset),
           timing: list.some((e) => e.timing),
           relieving: list.some((e) => e.relieving),
+        },
+        details: {
+          onset: list.findLast((e) => e.onset)?.onset ?? null,
+          timing: list.findLast((e) => e.timing)?.timing ?? null,
+          relieving: list.findLast((e) => e.relieving)?.relieving ?? null,
         },
       };
     });

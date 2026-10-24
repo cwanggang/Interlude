@@ -1,4 +1,7 @@
+import { Figtree_400Regular, Figtree_500Medium, Figtree_600SemiBold, Figtree_700Bold } from '@expo-google-fonts/figtree';
+import { Outfit_600SemiBold, Outfit_700Bold } from '@expo-google-fonts/outfit';
 import { ConvexProvider, ConvexReactClient } from 'convex/react';
+import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 
 import { TextScaleProvider } from '../textScale';
@@ -9,22 +12,25 @@ const convex = new ConvexReactClient(process.env.EXPO_PUBLIC_CONVEX_URL!, {
 });
 
 export default function RootLayout() {
+  // Outfit for headings, Figtree for body text (Figma "Type pairing").
+  const [fontsLoaded] = useFonts({
+    Outfit_600SemiBold,
+    Outfit_700Bold,
+    Figtree_400Regular,
+    Figtree_500Medium,
+    Figtree_600SemiBold,
+    Figtree_700Bold,
+  });
+  if (!fontsLoaded) return null;
+
   return (
     <ConvexProvider client={convex}>
       <TextScaleProvider>
-        <Stack
-          screenOptions={{
-            // Each screen sets its translated title; blank (not the route name) while it loads.
-            title: '',
-            headerTitleStyle: { fontSize: theme.font.size.lg },
-            headerTintColor: theme.color.primary,
-            contentStyle: { backgroundColor: theme.color.bg },
-          }}
-        >
-          {/* The tabs have their own headers; history, prep, summaries and notifications open on top. */}
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="chat" options={{ presentation: 'modal', headerBackVisible: false }} />
-          <Stack.Screen name="emergency" options={{ presentation: 'fullScreenModal', headerShown: false, gestureEnabled: false }} />
+        {/* Every screen draws its own header from the design (PageHeader), so none here. */}
+        <Stack screenOptions={{ headerShown: false, title: '', contentStyle: { backgroundColor: theme.color.bg } }}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="chat" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="emergency" options={{ presentation: 'fullScreenModal', gestureEnabled: false }} />
         </Stack>
       </TextScaleProvider>
     </ConvexProvider>

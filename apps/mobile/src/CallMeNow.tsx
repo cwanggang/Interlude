@@ -1,30 +1,18 @@
 import { useMutation, useQuery } from 'convex/react';
 import { useState } from 'react';
+import { View } from 'react-native';
 
 import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
-import { Button, Card, Text } from './components';
+import { Button, Text } from './components';
 import type { Strings } from './i18n';
+import { theme } from './theme';
 
 /**
- * B3: places the same outbound call as the daily check-in, then shows its live status. On Home
- * the tile already shows the call (callSchedule), so `quiet` keeps only errors and the `hint`.
+ * B3: places the same outbound call as the daily check-in and follows it. `message` is the live
+ * status or an error to show under the button; `active` while dialing or on the call.
  */
-export function CallMeNow({
-  patientId,
-  s,
-  mode = 'checkin',
-  label,
-  hint,
-  quiet,
-}: {
-  patientId: Id<'patients'>;
-  s: Strings;
-  mode?: 'checkin' | 'explainer';
-  label?: string;
-  hint?: string;
-  quiet?: boolean;
-}) {
+export function useCallMeNow(patientId: Id<'patients'> | undefined, s: Strings, mode: 'checkin' | 'explainer' = 'checkin') {
   const triggerNow = useMutation(api.calls.triggerNow);
   const [conversationId, setConversationId] = useState<Id<'conversations'> | null>(null);
   const [unavailable, setUnavailable] = useState(false);
@@ -33,9 +21,8 @@ export function CallMeNow({
 
   const status = call?.status;
   const active = status === 'dialing' || status === 'in_progress';
-  const message = quiet && !unavailable
-    ? null
-    : status === 'dialing'
+  const message =
+    status === 'dialing'
       ? s.calling
       : status === 'in_progress'
         ? s.onCall
@@ -47,7 +34,8 @@ export function CallMeNow({
               ? s.callUnavailable
               : null;
 
-  const onPress = async () => {
+  const start = async () => {
+    if (!patientId) return;
     setBusy(true);
     try {
       const result = await triggerNow({ patientId, mode });
@@ -60,11 +48,26 @@ export function CallMeNow({
     }
   };
 
+  return { start, busy, active, message, error: status === 'failed' || unavailable };
+}
+
+/** The big lavender→periwinkle call button with its live status underneath ("Talk about my visit"). */
+export function CallMeNow({
+  patientId,
+  s,
+  mode = 'checkin',
+  label,
+}: {
+  patientId: Id<'patients'>;
+  s: Strings;
+  mode?: 'checkin' | 'explainer';
+  label?: string;
+}) {
+  const call = useCallMeNow(patientId, s, mode);
   return (
-    <Card>
-      <Button big label={active ? s.calling : (label ?? s.callMeNow)} onPress={() => void onPress()} disabled={busy || active} />
-      {hint && <Text variant="muted">{hint}</Text>}
-      {message && <Text variant={status === 'failed' || unavailable ? 'error' : 'body'}>{message}</Text>}
-    </Card>
+    <View style={{ gap: theme.space.sm }}>
+      <Button big icon="phone-white" label={call.active ? s.calling : (label ?? s.callMeNow)} onPress={() => void call.start()} disabled={call.busy || call.active} />
+      {call.message && <Text variant={call.error ? 'error' : 'muted'} center>{call.message}</Text>}
+    </View>
   );
 }

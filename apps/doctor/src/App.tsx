@@ -8,6 +8,7 @@ import { NavBar } from './components'
 import DoctorHome from './screens/DoctorHome'
 import PatientList from './screens/PatientList'
 import PatientView from './screens/PatientView'
+import { theme } from './theme'
 
 type Location = { tab: 'home' | 'patients'; patientId?: Id<'patients'> }
 
@@ -26,6 +27,9 @@ function hrefFor(location: Location): string {
 export default function App() {
   const [location, setLocation] = useState<Location>(readHash)
   const openAlerts = useQuery(api.alerts.listOpen)
+  const patients = useQuery(api.patients.list)
+  // No auth: the doctor is whoever the demo patient sees.
+  const doctorName = patients?.find((r) => r.nextAppointment)?.nextAppointment?.doctorName ?? null
 
   useEffect(() => {
     const onHash = () => setLocation(readHash())
@@ -36,11 +40,12 @@ export default function App() {
   const go = (next: Location) => {
     window.location.hash = hrefFor(next)
     setLocation(next)
+    window.scrollTo(0, 0)
   }
   const openPatient = (patientId: Id<'patients'>) => go({ tab: 'patients', patientId })
 
   return (
-    <>
+    <div style={{ minHeight: '100vh', background: theme.color.bg, color: theme.color.text, fontFamily: theme.font.body }}>
       <NavBar
         tabs={[
           { id: 'home', label: 'Home' },
@@ -48,6 +53,7 @@ export default function App() {
         ]}
         active={location.tab}
         onSelect={(tab) => go({ tab })}
+        doctorName={doctorName}
       />
       {location.patientId ? (
         <PatientView patientId={location.patientId} onBack={() => go({ tab: 'patients' })} />
@@ -56,6 +62,6 @@ export default function App() {
       ) : (
         <DoctorHome onOpenPatient={openPatient} onSeeAllPatients={() => go({ tab: 'patients' })} />
       )}
-    </>
+    </div>
   )
 }
