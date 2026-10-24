@@ -58,3 +58,14 @@ API shapes, verified by probing validation errors:
 | Is she still taking metformin? | Yes, visit says keep 500 mg twice a day; cites the check-in quote |
 | What did the doctor change at the visit? | Glipizide lowered to 2.5 mg with breakfast, metformin unchanged, low-sugar plan, A1c + foot exam; undated visit citations |
 | Does she have chest pain? | No mention in the records; no citations |
+
+## Workflows (task 5)
+
+API shapes, verified on our project:
+- Validate YAML: Agent Builder built-in tool `platform.workflows.validate_workflow` via `POST /api/agent_builder/tools/_execute` `{ tool_id, tool_params: { yaml } }`
+- Create: `POST /api/workflows` `{ workflows: [{ yaml }] }`; the id is derived from `name` (we keep names hyphenated: `b-pre-visit-brief`)
+- Read / update: `GET` / `PUT /api/workflows/workflow/{id}` (`PUT` body `{ yaml }`)
+- Run: `POST /api/workflows/workflow/{id}/run` `{ inputs }` returns `{ workflowExecutionId }`
+- Status and output: `GET /api/workflows/executions/{executionId}?includeOutput=true`; the `ai.agent` step's text is `stepExecutions[].output.message`
+
+The brief comes back through polling, so no Convex HTTP route or webhook secret is needed. Test run: "Generate brief" on the seeded patient took 18 s and saved a 111-word brief with `source: "elastic_workflow"`, covering the high-sugar start (250 → 180), the low-sugar spells (65, 70, 58 with dates), new foot tingling, red flags, and both open questions passed in from Convex.

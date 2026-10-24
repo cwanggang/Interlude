@@ -131,7 +131,7 @@ Convex is the hub: the apps, Cartesia, Claude, and Elastic all connect through i
 
 **Visit:** audio is uploaded to Convex storage → transcribed in one batch → Claude cleans it, labels speakers, and writes summaries in both languages → passages are indexed in Elastic for the explainer agent.
 
-**Pre-visit brief (P1):** the doctor clicks "Generate brief" (or the Workflow's daily schedule fires) → `elastic.generateBrief` triggers the `pre-visit-brief` Elastic Workflow → the Workflow asks the Agent Builder agent for a brief → it POSTs the text to `https://<deployment>.convex.site/elastic/previsit-brief` → a `briefs` row appears on the dashboard live. If Workflows is unavailable, `generateBrief` calls the agent itself and writes the row.
+**Pre-visit brief (P1):** the doctor clicks "Generate brief" → `elastic.generateBrief` runs the `pre-visit-brief` Elastic Workflow with the patient's open questions → the Workflow's `ai.agent` step asks the Agent Builder agent for a brief → `generateBrief` waits for the run (about 20 seconds) and saves the text as a `briefs` row, which appears on the dashboard live. No Convex HTTP route is involved: `generateBrief` runs the Workflow through Kibana's API, waits for it, and saves the result itself. If the Workflow fails, `generateBrief` calls the agent directly. A daily run later is one cron line in `crons.ts` calling `internal.elastic.generateBriefsForUpcoming`.
 
 The two architecture diagrams exist only in the original Google Doc; this Markdown copy shows placeholders.
 
@@ -179,8 +179,6 @@ ELASTIC_URL                   Serverless Elasticsearch endpoint (Serverless has 
 ELASTIC_API_KEY
 KIBANA_URL                    Agent Builder and Workflows APIs
 ELASTIC_INDEX_PREFIX          per deployment: a_, b_, prod_
-ELASTIC_AGENT_ID              the Agent Builder agent's ID
-ELASTIC_WEBHOOK_SECRET        shared secret the Workflow sends to /elastic/previsit-brief
 DEMO_PHONE                    optional default phone for the seed
 ```
 
@@ -274,7 +272,7 @@ visits: defineTable({
   status: v.string(),                        // uploaded | transcribed | summarized
 }).index("by_appointment", ["appointmentId"]),
 
-briefs: defineTable({                // C9, written via POST /elastic/previsit-brief
+briefs: defineTable({                // C9, written by elastic.generateBrief
   patientId: v.id("patients"),
   appointmentId: v.id("appointments"),
   textEnglish: v.string(),
@@ -463,7 +461,6 @@ The two tracks touch in only a few functions. The contract defines them on day o
 | `internal.elastic.searchVisit` | B | A's `/cartesia/search-visit` | Top 3 visit passages |
 | `api.calls.triggerNow` | A | B's "Call me now" button | Start a call right away |
 | `api.calls.getAccessToken` | A | A's voice client in the app | Short-lived Cartesia token |
-| `internal.briefs.save` | B | A's `POST /elastic/previsit-brief` route | Store a pre-visit brief from the Workflow |
 
 ### Step 1: write the contract (Dev A, Sat 3–4:30 AM)
 
@@ -573,7 +570,7 @@ table and rules. Don't implement features.
 ### Track A: voice + AI pipeline (Dev A)
 
 - [ ] **5 AM–12 PM, the spine:** `startCheckinCall`, the cron job, `triggerNow`, Get Call polling, Claude `record_checkin` extraction, mutations, an awaited call to `internal.elastic.indexCheckin` *before* marking the conversation `processed`, and the red-flag and add-question webhooks
-- [ ] **12–6 PM:** visit processing: upload, batch transcription, Claude cleanup and speaker labels, summaries in both languages, `indexVisitChunks`; the `/cartesia/search-visit` webhook; explainer agents; the `POST /elastic/previsit-brief` route (checks `x-webhook-secret` against `ELASTIC_WEBHOOK_SECRET`, not the Cartesia secret; body `{ patient_id, appointment_id, text }`; calls `internal.briefs.save` with `source: "elastic_workflow"`)
+- [ ] **12–6 PM:** visit processing: upload, batch transcription, Claude cleanup and speaker labels, summaries in both languages, `indexVisitChunks`; the `/cartesia/search-visit` webhook; explainer agents
 - [ ] **6 PM–12 AM:** teach-back (E3), question coverage (D4), unaddressed concerns (D5), `getAccessToken`
 - [ ] **12–6 AM:** in-app voice (B4): dev build, `react-native-audio-api`, WebSocket session in `apps/mobile/src/voice`
 
