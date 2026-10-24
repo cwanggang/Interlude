@@ -2,7 +2,7 @@
 import { useQuery } from 'convex/react';
 
 import { api } from '../../../../convex/_generated/api';
-import { Badge, Card, ListItem, Screen, ScreenTitle, Text } from '../components';
+import { Badge, Card, ListItem, PageHeader, Screen, ScreenTitle, Text } from '../components';
 import { formatDay } from '../i18n';
 import { usePatient } from '../usePatient';
 
@@ -20,7 +20,7 @@ export default function History() {
   for (const e of entries ?? []) days.set(e.date, [...(days.get(e.date) ?? []), e]);
 
   return (
-    <Screen>
+    <Screen header={<PageHeader title={s.historyTitle} />}>
       <ScreenTitle title={s.historyTitle} />
       {entries === undefined && <Text>{s.loading}</Text>}
       {entries?.length === 0 && <Text variant="muted">{s.noHistory}</Text>}

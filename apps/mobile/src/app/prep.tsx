@@ -2,7 +2,7 @@
 import { useQuery } from 'convex/react';
 
 import { api } from '../../../../convex/_generated/api';
-import { Card, Screen, ScreenTitle, Text } from '../components';
+import { Card, PageHeader, Screen, ScreenTitle, Text } from '../components';
 import { usePatient } from '../usePatient';
 
 export default function Prep() {
@@ -11,7 +11,7 @@ export default function Prep() {
   const open = questions?.filter((q) => q.status === 'open') ?? [];
 
   return (
-    <Screen>
+    <Screen header={<PageHeader title={s.prepTitle} />}>
       <ScreenTitle title={s.prepTitle} />
       <Text variant="muted">{s.prepHint}</Text>
       {questions === undefined && appointment !== null && <Text>{s.loading}</Text>}

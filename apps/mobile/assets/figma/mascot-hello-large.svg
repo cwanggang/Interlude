@@ -1,0 +1,25 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="121" height="121" viewBox="0 0 121 121" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="Mascot &#194;&#183; hello">
+<g id="Frame">
+<g id="Vector">
+<use xlink:href="#stroke0_0_19" fill="url(#paint0_linear_0_19)"/>
+<mask id="stroke1_0_19" maskUnits="userSpaceOnUse" x="1.25996" y="1.20904" width="119" height="120" fill="black">
+<rect fill="white" x="1.25996" y="1.20904" width="119" height="120"/>
+<use xlink:href="#stroke0_0_19"/>
+</mask>
+<path d="M60.5 7.25972C88.33 6.04972 112.53 26.6197 113.74 56.8697C114.95 87.1197 95.59 114.95 61.71 114.95C27.83 114.95 7.25996 93.1697 7.25996 61.7097C7.25996 30.2497 32.67 8.46972 60.5 7.25972Z" stroke-width="12" stroke="white" mask="url(#stroke1_0_19)"/>
+</g>
+</g>
+<ellipse id="Ellipse" cx="40.2" cy="28.4" rx="10.4" ry="5.72" fill="white" fill-opacity="0.5"/>
+<rect id="Rectangle" x="45.4" y="42.44" width="10.92" height="23.92" rx="5.2" fill="#0D2A3A"/>
+<rect id="Rectangle_2" x="67.24" y="42.44" width="10.92" height="23.92" rx="5.2" fill="#0D2A3A"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_19" x1="7.25996" y1="7.20904" x2="114.994" y2="113.736" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+<path id="stroke0_0_19" d="M60.5 7.25972C88.33 6.04972 112.53 26.6197 113.74 56.8697C114.95 87.1197 95.59 114.95 61.71 114.95C27.83 114.95 7.25996 93.1697 7.25996 61.7097C7.25996 30.2497 32.67 8.46972 60.5 7.25972Z"/>
+</defs>
+</svg>

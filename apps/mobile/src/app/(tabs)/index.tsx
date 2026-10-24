@@ -44,7 +44,7 @@ export default function Home() {
       </Screen>
     );
   }
-  if (patient === null) return <Redirect href="/settings" />;
+  if (patient === null) return <Redirect href="/onboarding" />;
 
   const summary = released ? summaryFor(released, language) : undefined;
   // In these states the tile carries the call action itself.

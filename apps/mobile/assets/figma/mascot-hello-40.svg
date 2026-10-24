@@ -1,0 +1,27 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Mascot &#194;&#183; hello">
+<g id="Frame" clip-path="url(#clip0_0_20)">
+<g id="Vector">
+<path d="M20 2.4C29.2 2 37.2 8.8 37.6 18.8C38 28.8 31.6 38 20.4 38C9.2 38 2.4 30.8 2.4 20.4C2.4 10 10.8 2.8 20 2.4Z" fill="url(#paint0_linear_0_20)"/>
+<mask id="stroke0_0_20" maskUnits="userSpaceOnUse" x="-0.6" y="-0.616753" width="42" height="42" fill="black">
+<rect fill="white" x="-0.6" y="-0.616753" width="42" height="42"/>
+<path d="M20 2.4C29.2 2 37.2 8.8 37.6 18.8C38 28.8 31.6 38 20.4 38C9.2 38 2.4 30.8 2.4 20.4C2.4 10 10.8 2.8 20 2.4Z"/>
+</mask>
+<path d="M20 2.4C29.2 2 37.2 8.8 37.6 18.8C38 28.8 31.6 38 20.4 38C9.2 38 2.4 30.8 2.4 20.4C2.4 10 10.8 2.8 20 2.4Z" stroke-width="6" stroke="white" mask="url(#stroke0_0_20)"/>
+</g>
+</g>
+<ellipse id="Ellipse" cx="12" cy="9" rx="4" ry="2.2" fill="white" fill-opacity="0.5"/>
+<rect id="Rectangle" x="14" y="14.4" width="4.2" height="9.2" rx="2" fill="#0D2A3A"/>
+<rect id="Rectangle_2" x="22.4" y="14.4" width="4.2" height="9.2" rx="2" fill="#0D2A3A"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_20" x1="2.4" y1="2.38325" x2="38.0145" y2="37.5987" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+<clipPath id="clip0_0_20">
+<rect width="40" height="40" fill="white"/>
+</clipPath>
+</defs>
+</svg>

@@ -1,0 +1,19 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="220" height="204" viewBox="0 0 220 204" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Mascot greeting">
+<ellipse id="Halo" cx="110" cy="103.475" rx="92" ry="93" fill="white" fill-opacity="0.376471"/>
+<g id="Mascot &#194;&#183; Hello">
+<path id="Blob" d="M109.996 21.0435C152.314 19.2035 189.112 50.4828 190.952 96.4819C192.792 142.481 163.354 184.8 111.836 184.8C60.3185 184.8 29.04 151.681 29.04 103.842C29.04 56.0027 67.6781 22.8834 109.996 21.0435Z" fill="url(#paint0_linear_0_9)"/>
+<ellipse id="Shine" cx="73.2" cy="51.4" rx="18.4" ry="10.12" fill="white" fill-opacity="0.501961"/>
+<rect id="Eye" x="82.4" y="76.24" width="19.32" height="42.32" rx="9.66" fill="#0D2A3A"/>
+<rect id="Eye_2" x="121.04" y="76.24" width="19.32" height="42.32" rx="9.66" fill="#0D2A3A"/>
+</g>
+<path id="Coral sparkle" d="M198 25C198.917 32.3333 201.667 35.0833 209 36C201.667 36.9167 198.917 39.6667 198 47C197.083 39.6667 194.333 36.9167 187 36C194.333 35.0833 197.083 32.3333 198 25Z" fill="#FF8A73"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_9" x1="29.04" y1="20.9664" x2="192.863" y2="182.95" gradientUnits="userSpaceOnUse">
+<stop stop-color="#5EE3E3"/>
+<stop offset="0.5" stop-color="#7FA7FF"/>
+<stop offset="1" stop-color="#C8B9FF"/>
+</linearGradient>
+</defs>
+</svg>
