@@ -75,6 +75,7 @@ const MAPPINGS = {
       speakers: { type: "keyword" },
       text_english: { type: "text", copy_to: "content" },
       text_patient_lang: { type: "text" },
+      text_bilingual: { type: "text", index: false }, // rerank field, as quote_bilingual
       content: { type: "semantic_text", inference_id: EMBEDDING_ID },
     },
   },
@@ -120,6 +121,13 @@ type CheckinSource = {
   language: string;
   quote_original: string;
   quote_english: string;
+};
+
+type VisitChunkSource = {
+  chunk_index: number;
+  speakers: string[];
+  text_english: string;
+  text_patient_lang: string;
 };
 
 function checkinDoc(a: CheckinArgs) {
@@ -254,6 +262,8 @@ export const indexVisitChunks = internalAction({
           speakers: c.speakers,
           text_english: c.textEnglish,
           text_patient_lang: c.textPatientLang,
+          text_bilingual: `${c.textPatientLang}
+${c.textEnglish}`,
         },
       ]),
     });
@@ -269,16 +279,56 @@ export const searchVisit = internalAction({
     query: v.string(),
   },
   returns: v.array(visitPassage),
-  handler: async (_ctx, _args): Promise<Infer<typeof visitPassage>[]> => {
-    return [
-      {
-        chunkIndex: 0,
-        speakers: ["doctor", "interpreter"],
-        textEnglish: "Take the new pill, meclizine 25 mg, once in the morning with food.",
-        textPatientLang: "Tome la pastilla nueva, meclizina de 25 mg, una vez en la mañana con comida.",
-        score: 1,
+  handler: async (_ctx, args): Promise<Infer<typeof visitPassage>[]> => {
+    const query = args.query.trim();
+    if (!query) return [];
+    await ensureOnce();
+    // Runs during a live phone call: log latency. If reranking is too slow, drop it here only.
+    const started = Date.now();
+    const appointmentFilter = { term: { appointment_id: args.appointmentId } };
+    const res = await es().search<VisitChunkSource>({
+      index: indexName("visit_chunks"),
+      size: 3,
+      _source: ["chunk_index", "speakers", "text_english", "text_patient_lang"],
+      retriever: {
+        text_similarity_reranker: {
+          retriever: {
+            rrf: {
+              retrievers: [
+                { standard: { query: { semantic: { field: "content", query } }, filter: appointmentFilter } },
+                {
+                  standard: {
+                    query: { multi_match: { query, fields: ["text_english", "text_patient_lang"] } },
+                    filter: appointmentFilter,
+                  },
+                },
+              ],
+              rank_window_size: 20,
+            },
+          },
+          field: "text_bilingual",
+          inference_id: RERANK_ID,
+          inference_text: query,
+          rank_window_size: 20,
+        },
       },
-    ];
+    });
+    console.log("elastic.searchVisit", args.appointmentId, `${Date.now() - started}ms`, res.hits.hits.length);
+    // No score cutoff: the explainer must always get its best passages, and it says
+    // "ask your clinic" when they don't answer the question.
+    return res.hits.hits.flatMap((h) =>
+      h._source
+        ? [
+            {
+              chunkIndex: h._source.chunk_index,
+              speakers: h._source.speakers,
+              textEnglish: h._source.text_english,
+              textPatientLang: h._source.text_patient_lang,
+              score: h._score ?? 0,
+            },
+          ]
+        : [],
+    );
   },
 });
 

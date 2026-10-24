@@ -29,3 +29,16 @@ Compared `.jina-reranker-v3`, `v3.5` and `v2-base-multilingual`, reranking on `q
 | chest pain | 0 hits (top unrelated score 0.98, below the 1.0 cutoff) |
 
 Timeline: dates are calendar days stored as UTC midnight, so the histogram buckets in UTC and "today" is computed in the patient's time zone in code. Bucketing with `time_zone` shifted every point a day early.
+
+## Visit passages (task 3)
+
+`searchVisit` uses the same hybrid + `.jina-reranker-v3.5` pattern on `visit_chunks` (rerank field `text_bilingual`), top 3, no score cutoff (the explainer always gets its best passages). Tested with five sample passages from a scripted endocrinology visit:
+
+| Spanish question | Top passage | Score |
+|---|---|---|
+| ¿Cuándo tomo la pastilla nueva? | glipizide lowered to 2.5 mg with breakfast | 1.44 |
+| ¿Qué hago si el azúcar me baja? | under 70: half a cup of juice, recheck in 15 min | 1.48 |
+| ¿Sigo con la metformina? | keep metformin 500 mg twice a day | 1.41 |
+| ¿Puedo comer pizza? (not in the visit) | weak match only | 1.03 |
+
+Latency including the reranker: 200-270 ms warm, so the reranker stays on for live calls.
