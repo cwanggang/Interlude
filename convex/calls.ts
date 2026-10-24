@@ -15,7 +15,7 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { agentIdFor, startOutboundCall, type Language } from "./cartesia";
-import { DAY_MS, localDate, localTime, nextDate, zonedTimeToMs } from "./lib/time";
+import { DAY_MS, localDate, nextDate, zonedTimeToMs } from "./lib/time";
 
 const conversationStatus = v.union(
   v.literal("dialing"),
@@ -65,6 +65,36 @@ export async function defaultMode(ctx: QueryCtx, appointmentId: Id<"appointments
 /** Calls (not chat sessions) count toward "called today". */
 function isCall(c: Doc<"conversations">): boolean {
   return c.channel !== "chat";
+}
+
+/**
+ * The one "due" rule, shared by the cron and the Home tile: one call per local day, at or
+ * after callTimeLocal. `recentCalls` is newest first. nextCallAt is null without consent.
+ */
+function callTiming(
+  patient: Doc<"patients">,
+  recentCalls: Doc<"conversations">[],
+  now: number,
+): { latestToday: Doc<"conversations"> | null; nextCallAt: number | null } {
+  const today = localDate(now, patient.timezone);
+  // Any call today counts, even a missed one, so a missed call isn't redialed every 5 min.
+  const latestToday =
+    recentCalls.find((c) => isCall(c) && localDate(c.startedAt, patient.timezone) === today) ?? null;
+  const callDay = latestToday ? nextDate(today) : today;
+  return {
+    latestToday,
+    nextCallAt: patient.consentCalls
+      ? zonedTimeToMs(callDay, patient.callTimeLocal, patient.timezone)
+      : null,
+  };
+}
+
+/** A finished call the patient talked on. A failure with endReason "error" was ours, after they spoke. */
+function wasAnswered(c: Doc<"conversations">): boolean {
+  if (c.status === "processed") return true;
+  return (
+    c.status === "failed" && c.endReason === "error" && !!c.transcript?.some((t) => t.role === "user")
+  );
 }
 
 /** Inserts the conversation row and schedules startCall. Null if the patient has no appointment. */
@@ -191,12 +221,7 @@ export const callSchedule = query({
         }
       : null;
 
-    const today = localDate(args.now, patient.timezone);
-    const latestToday = recent.find((c) => localDate(c.startedAt, patient.timezone) === today);
-    const callDay = latestToday ? nextDate(today) : today;
-    const nextCallAt = patient.consentCalls
-      ? zonedTimeToMs(callDay, patient.callTimeLocal, patient.timezone)
-      : null;
+    const { latestToday, nextCallAt } = callTiming(patient, recent, args.now);
     const base = { nextCallAt, lastCheckin };
 
     if (latestToday) {
@@ -205,9 +230,7 @@ export const callSchedule = query({
       if (s === "dialing" || s === "in_progress" || s === "ended") {
         return { ...base, state: "calling", conversationId };
       }
-      // A check-in marked processed with no summary had no patient turns: nobody answered.
-      const answered = s === "processed" && (latestToday.mode !== "checkin" || !!latestToday.summaryEnglish);
-      return { ...base, state: answered ? "done" : "missed", conversationId };
+      return { ...base, state: wasAnswered(latestToday) ? "done" : "missed", conversationId };
     }
     if (nextCallAt === null) return { ...base, state: "off", conversationId: null };
     return {
@@ -264,17 +287,13 @@ export const queueDueCheckins = internalMutation({
     let queued = 0;
     for (const patient of patients) {
       if (!patient.consentCalls) continue;
-      if (localTime(now, patient.timezone) < patient.callTimeLocal) continue;
-      const today = localDate(now, patient.timezone);
       const recent = await ctx.db
         .query("conversations")
         .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
         .order("desc")
         .take(20);
-      // Any call today counts, even a failed one, so a missed call isn't redialed every 5 min.
-      if (recent.some((c) => isCall(c) && localDate(c.startedAt, patient.timezone) === today)) {
-        continue;
-      }
+      const { latestToday, nextCallAt } = callTiming(patient, recent, now);
+      if (latestToday || nextCallAt === null || now < nextCallAt) continue;
       if (await createCall(ctx, patient, "checkin")) queued++;
     }
     return queued;
@@ -391,6 +410,7 @@ export const startCall = internalAction({
       await ctx.runMutation(internal.pipeline.setStatus, {
         conversationId: args.conversationId,
         status: "failed",
+        endReason: "error",
       });
     }
     return null;

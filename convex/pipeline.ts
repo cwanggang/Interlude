@@ -54,6 +54,7 @@ export const pollCall = internalAction({
       await ctx.runMutation(internal.pipeline.saveTranscript, {
         conversationId: args.conversationId,
         transcript: call.transcript,
+        endReason: call.endReason ?? undefined,
       });
       await ctx.scheduler.runAfter(0, internal.pipeline.processConversation, {
         conversationId: args.conversationId,
@@ -65,6 +66,7 @@ export const pollCall = internalAction({
       await ctx.runMutation(internal.pipeline.setStatus, {
         conversationId: args.conversationId,
         status: "failed",
+        endReason: call?.endReason ?? (call ? "failed" : "timeout"),
       });
       return null;
     }
@@ -91,9 +93,15 @@ export const processConversation = internalAction({
     if (!conversation || conversation.status !== "ended") return null;
     const transcript = conversation.transcript ?? [];
 
-    // No answer, voicemail, or an explainer call: nothing to extract.
-    if (conversation.mode !== "checkin" || !transcript.some((t) => t.role === "user")) {
-      console.log(`[pipeline] ${args.conversationId}: nothing to extract; marking processed`);
+    // No patient turns (no answer, voicemail, busy): a missed call, so the Home tile can say so.
+    if (!transcript.some((t) => t.role === "user")) {
+      const endReason = conversation.endReason ?? "no_answer";
+      console.log(`[pipeline] ${args.conversationId}: no patient turns (${endReason}); missed`);
+      await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "failed", endReason });
+      return null;
+    }
+    // An explainer call has nothing to extract.
+    if (conversation.mode !== "checkin") {
       await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "processed" });
       return null;
     }
@@ -108,7 +116,12 @@ export const processConversation = internalAction({
       );
     } catch (error) {
       console.error(`[pipeline] Claude extraction failed for ${args.conversationId}:`, error);
-      await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "failed" });
+      // "error", not a missed call: the patient did talk (callSchedule shows the call as done).
+      await ctx.runMutation(internal.pipeline.setStatus, {
+        ...args,
+        status: "failed",
+        endReason: "error",
+      });
       return null;
     }
     console.log(
@@ -203,9 +216,10 @@ export const saveExtraction = internalMutation({
         patientId: conversation.patientId,
         conversationId: conversation._id,
         date,
-        medication: m.medication,
+        medication: m.medication.trim().toLowerCase(), // the key VisitSummary v2 also uses
         action: m.action,
         note: opt(m.note),
+        source: "voice",
       });
     }
 
@@ -218,6 +232,7 @@ export const saveExtraction = internalMutation({
 
     await ctx.db.patch("conversations", conversation._id, {
       summaryEnglish: extraction.summary_english,
+      summaryPatientLang: extraction.summary_patient_lang || extraction.summary_english,
     });
     return ids;
   },
@@ -313,6 +328,42 @@ export const addVoiceQuestion = internalMutation({
   },
 });
 
+/**
+ * Dev: run a typed transcript through the real post-call pipeline, no phone needed.
+ * An empty transcript tests the missed-call path.
+ * `npx convex run pipeline:devProcessTranscript '{"transcript":[{"role":"user","text":"..."}]}'`
+ */
+export const devProcessTranscript = internalMutation({
+  args: {
+    transcript: transcriptValidator,
+    patientId: v.optional(v.id("patients")),
+    endReason: v.optional(v.string()),
+  },
+  returns: v.id("conversations"),
+  handler: async (ctx, args) => {
+    const patient = args.patientId
+      ? await ctx.db.get("patients", args.patientId)
+      : await ctx.db.query("patients").first();
+    if (!patient) throw new Error("No patient; run the seed first");
+    const appointment = await currentAppointment(ctx, patient._id);
+    if (!appointment) throw new Error("Patient has no appointment");
+    const conversationId = await ctx.db.insert("conversations", {
+      patientId: patient._id,
+      appointmentId: appointment._id,
+      channel: "phone",
+      mode: "checkin",
+      cartesiaCallId: `dev-${Date.now()}`,
+      status: "ended",
+      language: patient.language,
+      transcript: args.transcript,
+      endReason: args.endReason,
+      startedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.pipeline.processConversation, { conversationId });
+    return conversationId;
+  },
+});
+
 // ---- Small reads and writes for the actions above ----
 
 export const getConversation = internalQuery({
@@ -325,6 +376,7 @@ export const getConversation = internalQuery({
       language: v.string(),
       cartesiaCallId: v.optional(v.string()),
       transcript: v.optional(transcriptValidator),
+      endReason: v.optional(v.string()),
       activeSymptoms: v.array(v.string()),
     }),
   ),
@@ -342,7 +394,9 @@ export const getConversation = internalQuery({
       language: c.language,
       cartesiaCallId: c.cartesiaCallId,
       transcript: c.transcript,
-      activeSymptoms: [...new Set(recent.map((e) => e.symptom))],
+      endReason: c.endReason,
+      // The patient's own words next to each key, so Claude maps "temblores" to the existing key.
+      activeSymptoms: [...new Set(recent.map((e) => `${e.symptom} (patient's words: ${e.symptomOriginal})`))],
     };
   },
 });
@@ -386,22 +440,35 @@ export const getEntries = internalQuery({
 });
 
 export const saveTranscript = internalMutation({
-  args: { conversationId: v.id("conversations"), transcript: transcriptValidator },
+  args: {
+    conversationId: v.id("conversations"),
+    transcript: transcriptValidator,
+    endReason: v.optional(v.string()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     await ctx.db.patch("conversations", args.conversationId, {
       transcript: args.transcript,
+      endReason: args.endReason,
       status: "ended",
     });
     return null;
   },
 });
 
+/** `endReason` on failure: Cartesia's end_reason, "no_answer", "timeout", or "error" (ours). */
 export const setStatus = internalMutation({
-  args: { conversationId: v.id("conversations"), status: conversationStatus },
+  args: {
+    conversationId: v.id("conversations"),
+    status: conversationStatus,
+    endReason: v.optional(v.string()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await ctx.db.patch("conversations", args.conversationId, { status: args.status });
+    await ctx.db.patch("conversations", args.conversationId, {
+      status: args.status,
+      ...(args.endReason !== undefined && { endReason: args.endReason }),
+    });
     return null;
   },
 });

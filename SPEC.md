@@ -791,7 +791,7 @@ to the v2 demo data, and update CLAUDE.md's tables. Don't implement features. Ty
 
 | Block | Priority | Work | Unblocks |
 | --- | --- | --- | --- |
-| A1 Call states | P0 | No-answer → `failed` + `endReason`; extraction adds `summary_patient_lang` and normalized medication keys; real `callSchedule`; the cron uses the same "due" rule | G1, G18, H4 completion |
+| A1 Call states ✅ | P0 | No-answer → `failed` + `endReason`; extraction adds `summary_patient_lang` and normalized medication keys; real `callSchedule`; the cron uses the same "due" rule. Test without a phone: `npx convex run pipeline:devProcessTranscript '{"transcript":[...]}'` (an empty transcript is a missed call) | G1, G18, H4 completion |
 | A2 Visit v2 | P0 | `summarizeVisit` returns VisitSummary v2 plus tasks; write `visitTasks`; D5 `unaddressedSymptoms`; `release` sets `releasedAt`; `listForPatient`, `latestReleasedSummary`, `reindexAllChunks`; explainer `medications` variable built from v2 | G3, G5, G10–G12, H10, H12, H13 |
 | A3 Alert translation | P0 | `createAlert` schedules Claude into `quoteEnglish` | H3 |
 | A4 Brief cron | P1 | One line in `crons.ts`: `internal.elastic.generateBriefsForUpcoming` daily | H8 freshness |
