@@ -40,7 +40,14 @@ export default function DoctorHome({ onOpenPatient, onSeeAllPatients }: { onOpen
           <div style={{ flex: 1, minWidth: 280, display: 'grid', gap: 4 }}>
             <Text variant="display">{`${greeting(now)}, ${home.doctorName}`}</Text>
             <Text color={theme.color.textMuted} style={{ whiteSpace: 'pre-wrap' }}>
-              {`${new Date(now).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}  ·  ${home.appointmentsThisWeek} appointment${home.appointmentsThisWeek === 1 ? '' : 's'} this week  ·  ${alertCount} alert${alertCount === 1 ? '' : 's'}`}
+              {/* Each part stays on one line; only the separators wrap. */}
+              {[
+                new Date(now).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }),
+                `${home.appointmentsThisWeek} appointment${home.appointmentsThisWeek === 1 ? '' : 's'} this week`,
+                `${alertCount} alert${alertCount === 1 ? '' : 's'}`,
+              ].map((part, i) => (
+                <span key={i} style={{ whiteSpace: 'pre' }}>{`${i > 0 ? '  ·  ' : ''}${part}`}</span>
+              ))}
             </Text>
           </div>
           <FindPatient onOpenPatient={onOpenPatient} onSeeAll={onSeeAllPatients} />
@@ -55,7 +62,7 @@ export default function DoctorHome({ onOpenPatient, onSeeAllPatients }: { onOpen
         <div style={{ flex: '1 1 560px', minWidth: 0 }}>
           {home.next ? <NextAppointment next={home.next} now={now} onOpenPatient={onOpenPatient} /> : <Card title="Next appointment"><Text variant="muted">No upcoming appointments this week.</Text></Card>}
         </div>
-        <div style={{ flex: '0 1 540px', minWidth: 320 }}>
+        <div style={{ flex: '1 1 440px', maxWidth: '100%', minWidth: 320 }}>
           <Upcoming next={home.next} rows={home.upcoming} now={now} onOpenPatient={onOpenPatient} />
         </div>
       </div>
