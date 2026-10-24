@@ -6,8 +6,8 @@ Every session starts with "I am Track A" or "I am Track B". Only edit files your
 
 | Track | Owns |
 | --- | --- |
-| A: Voice + AI pipeline | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs |
-| B: Data + apps | `convex/elastic.ts`, `convex/briefs.ts`, `/elastic/*`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files |
+| A: Voice + AI pipeline | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `convex/chat.ts`, `convex/lib/time.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs |
+| B: Data + apps | `convex/elastic.ts`, `convex/briefs.ts`, `/elastic/*`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `convex/medications.ts`, `convex/tasks.ts`, `convex/dashboard.ts`, `convex/health.ts`, `convex/notifications.ts`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files |
 | Shared (Dev A approves) | `convex/schema.ts`, `convex/seed.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `ELASTIC.md`, `CLAUDE.md` |
 
 ## Cross-track functions (the contract)
@@ -25,8 +25,13 @@ Do not change the args or return validators of these without both devs agreeing.
 | `api.calls.getAccessToken` | A | A's voice client |
 | `api.visits.generateUploadUrl`, `api.visits.create`, `api.visits.getByAppointment`, `api.visits.release` | A | B's visit upload, summary and review screens |
 | `useVoiceSession` in `apps/mobile/src/voice` | A | B's in-app voice screen |
+| `api.calls.callSchedule` (pass `now` rounded to the minute) | A | B's Home tile |
+| `api.visits.listForPatient`, `api.visits.latestReleasedSummary` | A | B's Home, My Visit, My Health, visit button |
+| `internal.visits.reindexAllChunks` | A | the seed (`seed.reindex`, after `elastic.reindexAll`) |
+| `api.chat.start`, `send`, `messages`, `end`, `generateUploadUrl`, `transcribeClip` | A | B's chat screen |
+| `localDate`, `localTime`, `zonedTimeToMs`, `nextDate` in `convex/lib/time.ts` | A | any Convex file (plain helpers) |
 
-Track A writes `alerts` and voice `questions` rows directly from `convex/pipeline.ts`; Track B owns every read and every typed edit of those tables.
+Track A writes `alerts` and voice `questions` rows directly from `convex/pipeline.ts`, and writes `visitTasks`, `chatMessages`, `glucoseReadings` and `alerts.quoteEnglish`; Track B owns every read and every typed edit of those tables.
 
 ## Rules
 

@@ -20,6 +20,11 @@ const patientDoc = v.object({
   _id: v.id("patients"),
   _creationTime: v.number(),
   ...profileFields,
+  // Schema v2 (optional)
+  dateOfBirth: v.optional(v.string()),
+  textSize: v.optional(v.union(v.literal("normal"), v.literal("large"), v.literal("xlarge"))),
+  notificationsEnabled: v.optional(v.boolean()),
+  doctorLastViewedAt: v.optional(v.number()),
 });
 const maybePatient = v.union(v.null(), patientDoc);
 
@@ -62,17 +67,21 @@ const medicationEventDoc = v.object({
   _id: v.id("medicationEvents"),
   _creationTime: v.number(),
   patientId: v.id("patients"),
-  conversationId: v.id("conversations"),
+  conversationId: v.optional(v.id("conversations")), // Schema v2: app taps have none
   date: v.string(),
   medication: v.string(),
   action: v.string(),
   note: v.optional(v.string()),
+  source: v.optional(v.union(v.literal("voice"), v.literal("app"))),
+  slot: v.optional(
+    v.union(v.literal("morning"), v.literal("midday"), v.literal("evening"), v.literal("bedtime")),
+  ),
 });
 
 const conversationRow = v.object({
   _id: v.id("conversations"),
   mode: v.union(v.literal("checkin"), v.literal("explainer")),
-  channel: v.union(v.literal("phone"), v.literal("app")),
+  channel: v.union(v.literal("phone"), v.literal("app"), v.literal("chat")),
   status: v.string(),
   startedAt: v.number(),
   summaryEnglish: v.optional(v.string()),

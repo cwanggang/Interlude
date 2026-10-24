@@ -1,5 +1,6 @@
 // TRACK A owns this file. Starting calls: cron, "Call me now", in-app voice tokens.
 // getAccessToken is still a stub (B4 block).
+// Time helpers live in lib/time.ts (shared with Track B).
 import { v, type Infer } from "convex/values";
 import {
   action,
@@ -14,6 +15,7 @@ import {
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { agentIdFor, startOutboundCall, type Language } from "./cartesia";
+import { DAY_MS, localDate, localTime, nextDate, zonedTimeToMs } from "./lib/time";
 
 const conversationStatus = v.union(
   v.literal("dialing"),
@@ -28,28 +30,6 @@ type Mode = Infer<typeof modeValidator>;
 
 /** Polls start this long after dialing, then every POLL_MS (SPEC.md "After every call"). */
 export const POLL_MS = 15_000;
-
-// ---- Time helpers (patient's local timezone) ----
-
-/** "2026-10-24" in the given timezone. */
-export function localDate(ms: number, timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(ms));
-}
-
-/** "18:30" in the given timezone. */
-function localTime(ms: number, timezone: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: timezone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(new Date(ms));
-}
 
 // ---- Shared lookups ----
 
@@ -77,6 +57,16 @@ async function releasedVisit(ctx: QueryCtx, appointmentId: Id<"appointments">) {
   return visit?.releasedToPatient ? visit : null;
 }
 
+/** "explainer" once this appointment's visit is released to the patient, else "checkin". */
+export async function defaultMode(ctx: QueryCtx, appointmentId: Id<"appointments">): Promise<Mode> {
+  return (await releasedVisit(ctx, appointmentId)) ? "explainer" : "checkin";
+}
+
+/** Calls (not chat sessions) count toward "called today". */
+function isCall(c: Doc<"conversations">): boolean {
+  return c.channel !== "chat";
+}
+
 /** Inserts the conversation row and schedules startCall. Null if the patient has no appointment. */
 async function createCall(
   ctx: MutationCtx,
@@ -88,8 +78,7 @@ async function createCall(
     console.warn(`[calls] ${patient._id} has no appointment; not calling`);
     return null;
   }
-  const resolvedMode =
-    mode ?? ((await releasedVisit(ctx, appointment._id)) ? "explainer" : "checkin");
+  const resolvedMode = mode ?? (await defaultMode(ctx, appointment._id));
   const conversationId = await ctx.db.insert("conversations", {
     patientId: patient._id,
     appointmentId: appointment._id,
@@ -143,6 +132,89 @@ export const getConversation = query({
     const c = await ctx.db.get("conversations", args.conversationId);
     if (!c) return null;
     return { _id: c._id, status: c.status, mode: c.mode, startedAt: c.startedAt };
+  },
+});
+
+/** Minutes before the scheduled call when the Home tile switches to "Call coming soon". */
+const SOON_MS = 15 * 60_000;
+
+const callScheduleResult = v.object({
+  state: v.union(
+    v.literal("off"),
+    v.literal("scheduled"),
+    v.literal("soon"),
+    v.literal("calling"),
+    v.literal("missed"),
+    v.literal("done"),
+  ),
+  nextCallAt: v.union(v.null(), v.number()),
+  conversationId: v.union(v.null(), v.id("conversations")),
+  lastCheckin: v.union(
+    v.null(),
+    v.object({
+      conversationId: v.id("conversations"),
+      startedAt: v.number(),
+      summaryPatientLang: v.union(v.null(), v.string()),
+      summaryEnglish: v.union(v.null(), v.string()),
+    }),
+  ),
+});
+
+/**
+ * G1 Home tile. Queries can't read the clock, so pass `now` rounded to the minute
+ * (e.g. Math.floor(Date.now() / 60_000) * 60_000) and re-render each minute.
+ * Same "due" rule as the cron: one call per local day at or after callTimeLocal.
+ */
+export const callSchedule = query({
+  args: { patientId: v.id("patients"), now: v.number() },
+  returns: callScheduleResult,
+  handler: async (ctx, args): Promise<Infer<typeof callScheduleResult>> => {
+    const patient = await ctx.db.get("patients", args.patientId);
+    if (!patient) throw new Error("Patient not found");
+    const recent = (
+      await ctx.db
+        .query("conversations")
+        .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+        .order("desc")
+        .take(30)
+    ).filter(isCall);
+
+    const last = recent.find(
+      (c) => c.mode === "checkin" && c.status === "processed" && c.summaryEnglish,
+    );
+    const lastCheckin = last
+      ? {
+          conversationId: last._id,
+          startedAt: last.startedAt,
+          summaryPatientLang: last.summaryPatientLang ?? null,
+          summaryEnglish: last.summaryEnglish ?? null,
+        }
+      : null;
+
+    const today = localDate(args.now, patient.timezone);
+    const latestToday = recent.find((c) => localDate(c.startedAt, patient.timezone) === today);
+    const callDay = latestToday ? nextDate(today) : today;
+    const nextCallAt = patient.consentCalls
+      ? zonedTimeToMs(callDay, patient.callTimeLocal, patient.timezone)
+      : null;
+    const base = { nextCallAt, lastCheckin };
+
+    if (latestToday) {
+      const conversationId = latestToday._id;
+      const s = latestToday.status;
+      if (s === "dialing" || s === "in_progress" || s === "ended") {
+        return { ...base, state: "calling", conversationId };
+      }
+      // A check-in marked processed with no summary had no patient turns: nobody answered.
+      const answered = s === "processed" && (latestToday.mode !== "checkin" || !!latestToday.summaryEnglish);
+      return { ...base, state: answered ? "done" : "missed", conversationId };
+    }
+    if (nextCallAt === null) return { ...base, state: "off", conversationId: null };
+    return {
+      ...base,
+      state: args.now >= nextCallAt - SOON_MS ? "soon" : "scheduled",
+      conversationId: null,
+    };
   },
 });
 
@@ -200,7 +272,9 @@ export const queueDueCheckins = internalMutation({
         .order("desc")
         .take(20);
       // Any call today counts, even a failed one, so a missed call isn't redialed every 5 min.
-      if (recent.some((c) => localDate(c.startedAt, patient.timezone) === today)) continue;
+      if (recent.some((c) => isCall(c) && localDate(c.startedAt, patient.timezone) === today)) {
+        continue;
+      }
       if (await createCall(ctx, patient, "checkin")) queued++;
     }
     return queued;
@@ -235,7 +309,7 @@ export const getCallContext = internalQuery({
       language: patient.language === "es" ? "Spanish" : "English",
       reason_for_visit: patient.reasonForVisit,
       days_until_visit: String(
-        Math.max(0, Math.ceil((appointment.scheduledAt - args.now) / 86_400_000)),
+        Math.max(0, Math.ceil((appointment.scheduledAt - args.now) / DAY_MS)),
       ),
     };
 
@@ -249,7 +323,7 @@ export const getCallContext = internalQuery({
       vars.last_checkin_summary = last?.summaryEnglish ?? "No previous check-in.";
 
       // Active symptoms: anything reported in the last 3 days, latest severity first seen.
-      const since = localDate(args.now - 3 * 86_400_000, patient.timezone);
+      const since = localDate(args.now - 3 * DAY_MS, patient.timezone);
       const entries = await ctx.db
         .query("symptomEntries")
         .withIndex("by_patient_date", (q) => q.eq("patientId", patient._id).gte("date", since))

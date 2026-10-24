@@ -12,7 +12,8 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { getCall } from "./cartesia";
 import { extractCheckin, type CheckinExtraction } from "./claude";
-import { POLL_MS, currentAppointment, localDate } from "./calls";
+import { POLL_MS, currentAppointment } from "./calls";
+import { localDate } from "./lib/time";
 
 /** 15 s × 80 = 20 minutes, well past the 2-minute check-in. */
 const MAX_POLLS = 80;

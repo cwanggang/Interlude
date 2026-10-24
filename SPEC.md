@@ -7,7 +7,7 @@ Oct 24, 2026 · @Caden
 We are building a bilingual (English and Spanish) voice companion. It checks in on patients by phone every day, turns those calls into a symptom timeline the doctor reads before the visit, and explains the visit afterward in the patient's language.
 
 - **Who it serves:** Spanish-speaking older adults with metabolic disease (the demo patient has type 2 diabetes) waiting weeks for an endocrinology appointment. Name this community in the pitch; the Anthropic track rewards a specific community. The narrow focus keeps the vocabulary manageable: glucose readings, metformin and other diabetes medicines, thirst, urination, fatigue, low-sugar spells, foot tingling.
-- **Demo storyline (seeded):** María has had high sugar (thirst, nighttime urination, fatigue, readings of 240-250) for three weeks on metformin. Her clinic added glipizide, and since then she has shaky, sweaty, dizzy spells before meals with readings of 58-70. The doctor sees that pattern on the timeline before the visit.
+- **Demo storyline (seeded):** Mariela has had high sugar (thirst, nighttime urination, fatigue, readings of 240-250) for three weeks on metformin. At her first visit 12 days ago, Dr. Lee added glipizide, and since then she has shaky, sweaty, dizzy spells before meals with readings of 58-70. Dr. Lee sees that pattern on the timeline before today's follow-up.
 - **Two interfaces:** a patient mobile app (Expo) plus daily phone calls, and a doctor web dashboard. The final screens come from the designer's Figma docs; see Figma scope (v2).
 - **The cycle:** before the visit (check-ins, questions) → the visit (recording, summary) → after the visit (explanation, follow-ups) → the next visit. Check-ins and the question queue keep running after every visit.
 
@@ -184,15 +184,15 @@ The main gaps the designs expose: the backend has no notion of "the next call" o
 
 Tap "Call me now" → the agent asks about the dizzy spells in Spanish → the doctor's Home shows the new point and the question → "Go to patient": timeline, quotes, brief, search, ask-the-record → "Start visit", upload the scripted recording, watch the steps → review the attention cards → release → the Spanish summary appears on the phone, medications first → "Talk about my visit" calls the explainer.
 
-### Decisions needed (recommendations first)
+### Decisions (taken in Phase 0; raise any disagreement in chat)
 
-- [ ] **Names.** The Figma frames use "Mariela" and "Dr. Lee"; the seed uses María González and Dr. Sarah Chen. Recommend renaming the seed to the designer's names, since the frames are already written with them.
-- [ ] **When is the visit?** The app mock says "12 días"; the website mock says "in 25 min". Recommend later today, so the doctor demo runs the visit live; "12 días" is the general countdown state.
-- [ ] **Questions tab overlap.** Recommend keeping the Questions tab for editing and making the My Visit list read-only, bilingual and large for handing the phone to the doctor. The backend is the same either way.
-- [ ] **Glucose readings.** Recommend adding a `glucoseReadings` table now (P1). The demo story is about readings of 58–70 and 240–250; the doctor chart gains the most. The patient app still shows no glucose judgments, as the designer asks.
-- [ ] **Editing the summary before release.** Recommend approve-only; editing is P2.
-- [ ] **Text size and notification settings** live on the patient record, so no new storage package is needed.
-- [ ] **Chat** is P1 and starts only after the P0 demo path runs on production.
+- [x] **Names.** The seed now uses the designer's names: Mariela González and Dr. Lee (Valley Endocrinology Clinic). Story change: Mariela's *first* visit with Dr. Lee, 12 days ago, added glipizide; today is the follow-up.
+- [x] **When is the visit?** Later today (default 120 min after seeding; `npx convex run seed:run '{"visitInMinutes":25}'` matches the mock). "12 días" is the general countdown state.
+- [ ] **Questions tab overlap.** Recommend keeping the Questions tab for editing and making the My Visit list read-only, bilingual and large for handing the phone to the doctor. The backend is the same either way; Dev B and the designer decide.
+- [x] **Glucose readings.** The `glucoseReadings` table is in the schema (P1, doctor chart only); nothing writes it until block A6.
+- [x] **Editing the summary before release.** Approve-only; editing is P2.
+- [x] **Text size and notification settings** live on the patient record (`patients.textSize`, `patients.notificationsEnabled`).
+- [x] **Chat** is P1. `convex/chat.ts` already stores sessions and messages and transcribes clips, but replies are a canned stub until block A5.
 
 ## System architecture
 
@@ -667,7 +667,7 @@ The two tracks touch in only a few functions. The contract defines them on day o
 
 | Function | Owner | Called by | Args → returns |
 | --- | --- | --- | --- |
-| `api.calls.callSchedule` (query) | A | B's Home tile (G1) | `{ patientId }` → `{ state: "off" \| "scheduled" \| "soon" \| "calling" \| "missed" \| "done", nextCallAt: number \| null, conversationId: Id \| null, lastCheckin: null \| { conversationId, startedAt, summaryPatientLang: string \| null, summaryEnglish: string \| null } }`. `soon` = within 15 min of `nextCallAt`; `missed` = today's latest call failed with no patient turns; `done` = today's check-in processed. The cron uses the same rule, so the tile and the dialer always agree |
+| `api.calls.callSchedule` (query) | A | B's Home tile (G1) | `{ patientId, now }` (queries can't read the clock: pass `Date.now()` rounded to the minute and re-render each minute) → `{ state: "off" \| "scheduled" \| "soon" \| "calling" \| "missed" \| "done", nextCallAt: number \| null, conversationId: Id \| null, lastCheckin: null \| { conversationId, startedAt, summaryPatientLang: string \| null, summaryEnglish: string \| null } }`. `soon` = within 15 min of `nextCallAt`; `missed` = today's latest call failed with no patient turns; `done` = today's check-in processed. The cron uses the same rule, so the tile and the dialer always agree |
 | `api.visits.listForPatient` (query) | A | B's past visits (G12, G13, H10) | `{ patientId }` → `[{ _id, appointmentId, scheduledAt, doctorName, status, releasedToPatient, releasedAt: number \| null }]`, newest first, no transcript |
 | `api.visits.latestReleasedSummary` (query) | A | B's Home and My Visit (G3, G5) | `{ patientId }` → `null \| { visitId, appointmentId, scheduledAt, doctorName, summaryEnglish, summaryPatientLang }` (VisitSummary v2) |
 | `internal.visits.reindexAllChunks` | A | the seed, after `elastic.reindexAll` | `{}` → `null`; re-indexes passages of every visit with a transcript |
@@ -770,13 +770,14 @@ Build plan v1 (below) is done except B4, D5, E3 and the brief cron. v2 makes the
 
 ### Phase 0: contract v2 (Dev A first, Dev B reviews)
 
-- [ ] Settle the "Decisions needed" list in Figma scope with Dev B and the designer
-- [ ] `convex/schema.ts`: apply Schema v2 (all new fields optional)
-- [ ] Stub every v2 contract function (Team workflow) with real validators and fake returns; stub `convex/chat.ts`
-- [ ] Move `localDate` and `localTime` from `calls.ts` to `convex/lib/time.ts` so Track B can import them (G4 dates, H4 completion counts)
-- [ ] Seed v2 (Figma scope → Demo data), with VisitSummary v2 for the past visit; the seed calls `internal.visits.reindexAllChunks` after `elastic.reindexAll`
-- [ ] `CLAUDE.md`: new files in the ownership table, v2 functions in the contract table
-- [ ] `npx convex dev --once`, `npm run typecheck`, merge to `main`; Dev B pulls before starting
+- [x] Decisions in Figma scope (one left for Dev B and the designer: the Questions tab)
+- [x] `convex/schema.ts`: Schema v2 applied (all new fields optional)
+- [x] v2 contract functions: `callSchedule`, `visits.listForPatient`, `visits.latestReleasedSummary` and `reindexAllChunks` are real; `convex/chat.ts` is real except Claude's reply (stub until A5)
+- [x] `localDate`, `localTime`, `zonedTimeToMs`, `nextDate` in `convex/lib/time.ts`
+- [x] Seed v2, with VisitSummary v2 for the past visit; `seed.reindex` runs `elastic.reindexAll`, then `visits.reindexAllChunks`
+- [x] Track B validators widened for the new optional fields (`patients.ts`, `appointments.ts`, `alerts.ts`), validator-only, so seeded rows pass. `briefs.ts` still needs `sections` when B5 starts writing it
+- [x] `CLAUDE.md` tables updated
+- [ ] Merge to `main`; Dev B pulls and reseeds their deployment before starting
 
 ```text
 Dev A prompt: I am Track A. Read SPEC.md: Figma scope (v2), Data model → Schema v2, Team
