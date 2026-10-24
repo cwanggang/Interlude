@@ -12,6 +12,8 @@ export default function RootLayout() {
     <ConvexProvider client={convex}>
       <Stack
         screenOptions={{
+          // Each screen sets its translated title; blank (not the route name) while it loads.
+          title: '',
           headerTitleStyle: { fontSize: theme.font.size.lg },
           headerTintColor: theme.color.primary,
           contentStyle: { backgroundColor: theme.color.bg },
