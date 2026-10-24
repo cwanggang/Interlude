@@ -516,6 +516,23 @@ const MARIELA_DAYS: SeedDay[] = [
   },
 ];
 
+// A6 glucose readings, keyed by daysAgo: [mg/dL, context, index of the symptom whose quote
+// holds the number]. Same numbers as the quotes above, so the chart and the quotes agree.
+type GlucoseContext = "fasting" | "before_meal" | "after_meal" | "bedtime" | "unknown";
+const MARIELA_GLUCOSE: Record<number, [number, GlucoseContext, number][]> = {
+  14: [[250, "fasting", 2]],
+  13: [[240, "unknown", 0]],
+  12: [[235, "unknown", 0]],
+  11: [[210, "unknown", 0]],
+  10: [[65, "before_meal", 0]],
+  8: [[70, "before_meal", 0]],
+  7: [[68, "before_meal", 0]],
+  6: [[58, "unknown", 0], [180, "fasting", 1]],
+  4: [[66, "bedtime", 0]],
+  3: [[60, "unknown", 0]],
+  1: [[64, "fasting", 0]],
+};
+
 // The past visit with Dr. Lee (VisitSummary v2). source_turn indexes PAST_TRANSCRIPT.
 const PAST_TRANSCRIPT = [
   {
@@ -857,6 +874,19 @@ export async function seed(ctx: MutationCtx, args: { phone?: string; visitInMinu
     }
     for (const m of day.medications ?? []) {
       await ctx.db.insert("medicationEvents", { patientId, conversationId, date, source: "voice", ...m });
+    }
+    for (const [valueMgDl, context, symptomIndex] of MARIELA_GLUCOSE[day.daysAgo] ?? []) {
+      const s = day.symptoms![symptomIndex];
+      await ctx.db.insert("glucoseReadings", {
+        patientId,
+        appointmentId: cycle,
+        conversationId,
+        date,
+        valueMgDl,
+        context,
+        quoteOriginal: s.quoteOriginal,
+        quoteEnglish: s.quoteEnglish,
+      });
     }
   }
 

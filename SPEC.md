@@ -189,7 +189,7 @@ Tap "Call me now" → the agent asks about the dizzy spells in Spanish → the d
 - [x] **Names.** The seed now uses the designer's names: Mariela González and Dr. Lee (Valley Endocrinology Clinic). Story change: Mariela's *first* visit with Dr. Lee, 12 days ago, added glipizide; today is the follow-up.
 - [x] **When is the visit?** Later today (default 120 min after seeding; `npx convex run seed:run '{"visitInMinutes":25}'` matches the mock). "12 días" is the general countdown state.
 - [ ] **Questions tab overlap.** Recommend keeping the Questions tab for editing and making the My Visit list read-only, bilingual and large for handing the phone to the doctor. The backend is the same either way; Dev B and the designer decide.
-- [x] **Glucose readings.** The `glucoseReadings` table is in the schema (P1, doctor chart only); nothing writes it until block A6.
+- [x] **Glucose readings.** Extraction writes `glucoseReadings` (mg/dL, context, quote) on every check-in, phone or chat; the seed backfills Mariela's 12 readings. Doctor chart only: Track B owns the read query and chart.
 - [x] **Editing the summary before release.** Approve-only; editing is P2.
 - [x] **Text size and notification settings** live on the patient record (`patients.textSize`, `patients.notificationsEnabled`).
 - [x] **Chat** is P1. `convex/chat.ts` already stores sessions and messages and transcribes clips, but replies are a canned stub until block A5.
@@ -796,7 +796,7 @@ to the v2 demo data, and update CLAUDE.md's tables. Don't implement features. Ty
 | A3 Alert translation ✅ | P0 | `createAlert` schedules Claude into `quoteEnglish` | H3 |
 | A4 Brief cron ✅ | P1 | `crons.ts`: `internal.elastic.generateBriefsForUpcoming` daily at 14:00 UTC (7 AM Pacific). Needs `elastic:syncAgent` once per deployment | H8 freshness |
 | A5 Chat backend ✅ | P1 | `convex/chat.ts`: Claude with tools (`add_question`, `report_red_flag`, `search_visit` via `internal.elastic.searchVisit`); before-visit replies act like the check-in agent, after-visit replies answer only from passages and return `citations`; red flags create an alert and set `redFlag`; `end` feeds the messages to `processConversation`; `transcribeClip` via `transcribeFile` | G16, G17, F2 |
-| A6 Glucose | P1, if approved | Extraction `glucose_readings` → `glucoseReadings` rows | Doctor glucose chart |
+| A6 Glucose ✅ | P1 | Extraction `glucose_readings` → `glucoseReadings` rows | Doctor glucose chart |
 | A7 Voice + teach-back | P1 | Test E3 on a real explainer call; B4: `mintAccessToken`, `getAccessToken`, `useVoiceSession` on a dev build | B4 |
 
 ```text
