@@ -1,7 +1,7 @@
 // Home (G1–G6). Top to bottom: the dynamic tile (cycle strip and countdown, or the call state),
 // "Call me now" with the next call time, today's medicines, the top instructions, and the
 // safety line. Before the first visit, a question preview and an empty state replace medicines.
-import { useQuery } from 'convex/react';
+import { useMutation, useQuery } from 'convex/react';
 import type { FunctionReturnType } from 'convex/server';
 import { Redirect, router } from 'expo-router';
 import { View } from 'react-native';
@@ -51,7 +51,7 @@ export default function Home() {
 
       {released === undefined ? null : summary ? (
         <>
-          <Medicines summary={summary} s={s} />
+          <Medicines summary={summary} patientId={patient._id} timezone={patient.timezone} now={now} s={s} />
           <Instructions items={summary.instructions ?? []} s={s} />
         </>
       ) : (
@@ -147,10 +147,16 @@ function nextCallHint(nextCallAt: number | null, now: number, language: Language
   return s.nextCall(day, formatTime(nextCallAt, language));
 }
 
-/** G3: today's doses from the latest released summary. The "Taken" button is block B6 (P1). */
-function Medicines({ summary, s }: { summary: VisitSummary; s: Strings }) {
+/** G3 / G4: today's doses from the latest released summary, each with a "Taken" toggle. */
+function Medicines({ summary, patientId, timezone, now, s }: { summary: VisitSummary; patientId: Id<'patients'>; timezone: string; now: number; s: Strings }) {
+  const events = useQuery(api.medications.week, { patientId, now, days: 1 });
+  const markTaken = useMutation(api.medications.markTaken);
   const doses = todaysDoses(summary);
   if (doses.length === 0) return null;
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date(now));
+  const taken = new Set(
+    (events ?? []).filter((e) => e.date === today && e.action === 'taken' && e.slot).map((e) => `${e.medication}-${e.slot}`),
+  );
   return (
     <Card title={s.todayMedications}>
       {doses.map((d) => (
@@ -158,6 +164,15 @@ function Medicines({ summary, s }: { summary: VisitSummary; s: Strings }) {
           key={`${d.key}-${d.slot}`}
           title={<Text variant="heading">{`${d.slot ? `${SLOT_ICON[d.slot]} ` : ''}${d.name} ${d.dose}`}</Text>}
           subtitle={d.slot ? s.slots[d.slot] : d.schedule}
+          trailing={
+            d.slot ? (
+              <Button
+                label={taken.has(`${d.key}-${d.slot}`) ? `✓ ${s.taken}` : s.markTaken}
+                variant={taken.has(`${d.key}-${d.slot}`) ? 'primary' : 'secondary'}
+                onPress={() => void markTaken({ patientId, medication: d.key, slot: d.slot!, taken: !taken.has(`${d.key}-${d.slot}`) })}
+              />
+            ) : undefined
+          }
         />
       ))}
       <Button label={s.seeAllMedications} variant="secondary" onPress={() => router.push('/visit')} />
