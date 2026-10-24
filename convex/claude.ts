@@ -384,3 +384,42 @@ export const setQuestionEnglish = internalMutation({
     return null;
   },
 });
+
+// ---- H3: red-flag quotes in English for the doctor (scheduled by pipeline.createAlert) ----
+
+/** Translates an alert's quote into alerts.quoteEnglish. On failure the doctor sees the original. */
+export const translateAlert = internalAction({
+  args: { alertId: v.id("alerts") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const alert = await ctx.runQuery(internal.claude.getAlertQuote, args);
+    if (!alert) return null;
+    try {
+      const quoteEnglish = await translate(alert.quote, "en");
+      await ctx.runMutation(internal.claude.setAlertEnglish, { ...args, quoteEnglish });
+    } catch (error) {
+      console.error(`[claude] alert ${args.alertId} translation failed:`, error);
+    }
+    return null;
+  },
+});
+
+export const getAlertQuote = internalQuery({
+  args: { alertId: v.id("alerts") },
+  returns: v.union(v.null(), v.object({ quote: v.string() })),
+  handler: async (ctx, args) => {
+    const a = await ctx.db.get("alerts", args.alertId);
+    return a ? { quote: a.quote } : null;
+  },
+});
+
+export const setAlertEnglish = internalMutation({
+  args: { alertId: v.id("alerts"), quoteEnglish: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (await ctx.db.get("alerts", args.alertId)) {
+      await ctx.db.patch("alerts", args.alertId, { quoteEnglish: args.quoteEnglish });
+    }
+    return null;
+  },
+});
