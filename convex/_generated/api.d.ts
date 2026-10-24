@@ -16,13 +16,18 @@ import type * as cartesia from "../cartesia.js";
 import type * as chat from "../chat.js";
 import type * as claude from "../claude.js";
 import type * as crons from "../crons.js";
+import type * as dashboard from "../dashboard.js";
 import type * as elastic from "../elastic.js";
+import type * as health from "../health.js";
 import type * as http from "../http.js";
 import type * as lib_time from "../lib/time.js";
+import type * as medications from "../medications.js";
+import type * as notifications from "../notifications.js";
 import type * as patients from "../patients.js";
 import type * as pipeline from "../pipeline.js";
 import type * as questions from "../questions.js";
 import type * as seed from "../seed.js";
+import type * as tasks from "../tasks.js";
 import type * as visits from "../visits.js";
 
 import type {
@@ -40,13 +45,18 @@ declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   claude: typeof claude;
   crons: typeof crons;
+  dashboard: typeof dashboard;
   elastic: typeof elastic;
+  health: typeof health;
   http: typeof http;
   "lib/time": typeof lib_time;
+  medications: typeof medications;
+  notifications: typeof notifications;
   patients: typeof patients;
   pipeline: typeof pipeline;
   questions: typeof questions;
   seed: typeof seed;
+  tasks: typeof tasks;
   visits: typeof visits;
 }>;
 

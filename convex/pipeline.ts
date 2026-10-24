@@ -267,20 +267,21 @@ async function insertVoiceQuestion(
   });
 }
 
-/** B7: from POST /cartesia/red-flag. */
+/** B7: from POST /cartesia/red-flag, or the chat's report_red_flag tool (with conversationId). */
 export const createAlert = internalMutation({
   args: {
     patientId: v.id("patients"),
     symptom: v.string(),
     quote: v.string(),
     cartesiaCallId: v.optional(v.string()),
+    conversationId: v.optional(v.id("conversations")),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    // Link the alert to the live call: by call ID if Cartesia sent it, else the patient's
-    // most recent call that hasn't finished.
-    let conversationId: Id<"conversations"> | undefined;
-    if (args.cartesiaCallId) {
+    // Link the alert to the live call: given directly (chat), by call ID if Cartesia sent it,
+    // else the patient's most recent call that hasn't finished.
+    let conversationId: Id<"conversations"> | undefined = args.conversationId;
+    if (!conversationId && args.cartesiaCallId) {
       const c = await ctx.db
         .query("conversations")
         .withIndex("by_call", (q) => q.eq("cartesiaCallId", args.cartesiaCallId))
@@ -296,14 +297,19 @@ export const createAlert = internalMutation({
       conversationId = recent.find((c) => c.status === "dialing" || c.status === "in_progress")
         ?._id;
     }
-    await ctx.db.insert("alerts", {
+    const patient = await ctx.db.get("patients", args.patientId);
+    const english = !patient || patient.language === "en";
+    const alertId = await ctx.db.insert("alerts", {
       patientId: args.patientId,
       conversationId,
       symptom: args.symptom,
       quote: args.quote,
+      // H3: the doctor sees the quote in English. Non-English quotes are translated just after.
+      quoteEnglish: english ? args.quote : undefined,
       createdAt: Date.now(),
       acknowledged: false,
     });
+    if (!english) await ctx.scheduler.runAfter(0, internal.claude.translateAlert, { alertId });
     console.log(`[pipeline] RED FLAG for ${args.patientId}: ${args.symptom}`);
     return null;
   },

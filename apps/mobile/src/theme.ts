@@ -9,6 +9,7 @@ export const theme = {
     textMuted: '#4f5963',
     primary: '#1f4fb8',
     primaryText: '#ffffff',
+    primaryBg: '#e8eefb',
     danger: '#b3261e',
     dangerBg: '#fdecea',
     success: '#2e7d32',

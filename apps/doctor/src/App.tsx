@@ -1,28 +1,61 @@
-// Two screens, no router: the patient list and one patient's view. The selection lives in the
-// URL hash so a refresh keeps the open patient.
+// Two tabs (Home, Patients) and the patient view inside Patients. No router: the location lives
+// in the URL hash (#/home, #/patients, #/patient/<id>) so a refresh keeps it.
 import { useEffect, useState } from 'react'
+import { useQuery } from 'convex/react'
+import { api } from '../../../convex/_generated/api'
 import type { Id } from '../../../convex/_generated/dataModel'
+import { NavBar } from './components'
+import DoctorHome from './screens/DoctorHome'
 import PatientList from './screens/PatientList'
 import PatientView from './screens/PatientView'
 
-function readHash(): Id<'patients'> | null {
-  const id = window.location.hash.replace(/^#\/?patient\//, '')
-  return id && id !== window.location.hash ? (id as Id<'patients'>) : null
+type Location = { tab: 'home' | 'patients'; patientId?: Id<'patients'> }
+
+function readHash(): Location {
+  const hash = window.location.hash.replace(/^#\/?/, '')
+  if (hash.startsWith('patient/')) return { tab: 'patients', patientId: hash.slice('patient/'.length) as Id<'patients'> }
+  if (hash === 'patients') return { tab: 'patients' }
+  return { tab: 'home' }
+}
+
+function hrefFor(location: Location): string {
+  if (location.patientId) return `#/patient/${location.patientId}`
+  return `#/${location.tab}`
 }
 
 export default function App() {
-  const [patientId, setPatientId] = useState<Id<'patients'> | null>(readHash)
+  const [location, setLocation] = useState<Location>(readHash)
+  const openAlerts = useQuery(api.alerts.listOpen)
 
   useEffect(() => {
-    const onHash = () => setPatientId(readHash())
+    const onHash = () => setLocation(readHash())
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  const open = (id: Id<'patients'> | null) => {
-    window.location.hash = id ? `/patient/${id}` : ''
-    setPatientId(id)
+  const go = (next: Location) => {
+    window.location.hash = hrefFor(next)
+    setLocation(next)
   }
+  const openPatient = (patientId: Id<'patients'>) => go({ tab: 'patients', patientId })
 
-  return patientId ? <PatientView patientId={patientId} onBack={() => open(null)} /> : <PatientList onSelect={open} />
+  return (
+    <>
+      <NavBar
+        tabs={[
+          { id: 'home', label: 'Home' },
+          { id: 'patients', label: 'Patients', badge: openAlerts?.length },
+        ]}
+        active={location.tab}
+        onSelect={(tab) => go({ tab })}
+      />
+      {location.patientId ? (
+        <PatientView patientId={location.patientId} onBack={() => go({ tab: 'patients' })} />
+      ) : location.tab === 'patients' ? (
+        <PatientList onSelect={openPatient} />
+      ) : (
+        <DoctorHome onOpenPatient={openPatient} onSeeAllPatients={() => go({ tab: 'patients' })} />
+      )}
+    </>
+  )
 }

@@ -540,3 +540,205 @@ export const setQuestionEnglish = internalMutation({
     return null;
   },
 });
+
+// ---- H3: red-flag quotes in English for the doctor (scheduled by pipeline.createAlert) ----
+
+/** Translates an alert's quote into alerts.quoteEnglish. On failure the doctor sees the original. */
+export const translateAlert = internalAction({
+  args: { alertId: v.id("alerts") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const alert = await ctx.runQuery(internal.claude.getAlertQuote, args);
+    if (!alert) return null;
+    try {
+      const quoteEnglish = await translate(alert.quote, "en");
+      await ctx.runMutation(internal.claude.setAlertEnglish, { ...args, quoteEnglish });
+    } catch (error) {
+      console.error(`[claude] alert ${args.alertId} translation failed:`, error);
+    }
+    return null;
+  },
+});
+
+export const getAlertQuote = internalQuery({
+  args: { alertId: v.id("alerts") },
+  returns: v.union(v.null(), v.object({ quote: v.string() })),
+  handler: async (ctx, args) => {
+    const a = await ctx.db.get("alerts", args.alertId);
+    return a ? { quote: a.quote } : null;
+  },
+});
+
+export const setAlertEnglish = internalMutation({
+  args: { alertId: v.id("alerts"), quoteEnglish: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (await ctx.db.get("alerts", args.alertId)) {
+      await ctx.db.patch("alerts", args.alertId, { quoteEnglish: args.quoteEnglish });
+    }
+    return null;
+  },
+});
+
+// ---- G16 chat: one assistant reply, with the same tools as the voice agents ----
+
+export type ChatTurn = { role: "user" | "assistant"; text: string };
+
+export type ChatPassage = { chunkIndex: number; textEnglish: string; textPatientLang: string };
+
+/** Tool handlers, supplied by convex/chat.ts. Each returns what Claude reads back. */
+export type ChatTools = {
+  addQuestion: (question: string) => Promise<void>;
+  reportRedFlag: (symptom: string, quote: string) => Promise<void>;
+  /** Explainer mode only. */
+  searchVisit?: (query: string) => Promise<ChatPassage[]>;
+};
+
+export type ChatReply = { text: string; redFlag: boolean; citations: ChatPassage[] };
+
+const MAX_TOOL_ROUNDS = 5;
+
+const RED_FLAG_RULES = `RED FLAGS: if the patient mentions chest pain or pressure, trouble breathing, face drooping, arm weakness, slurred speech, fainting, severe bleeding, confusion or trouble staying awake (possible very low blood sugar), or thoughts of harming themselves: call report_red_flag first (symptom in English, quote in their exact words), then tell them clearly to call 911 now (for thoughts of self-harm: call or text 988). Keep that reply to two short sentences.`;
+
+function chatSystemPrompt(mode: "checkin" | "explainer", vars: Record<string, string>): string {
+  const common = `You are a friendly health assistant in a text chat with ${vars.patient_name}, in a patient app. Write only in ${vars.language} unless the patient switches language; then follow them. Use short, simple sentences: the patient may be older and reading on a phone. In Spanish, always address them as "usted", never "tú". Never diagnose, never give medical advice, never recommend or change medicine. Plain text only, no markdown.
+${RED_FLAG_RULES}`;
+  if (mode === "checkin") {
+    return `${common}
+
+The patient has a doctor visit in ${vars.days_until_visit} days for: ${vars.reason_for_visit}.
+Last check-in: ${vars.last_checkin_summary}
+Active symptoms: ${vars.active_symptoms}
+
+Your job is a check-in, like the daily phone call. When the patient tells you about a symptom, ask one short follow-up at a time: better, worse or the same; how bad from 0 to 10; when it started; what makes it better or worse. Ask about medicines or sugar readings if it fits. Don't repeat questions they've answered. When they want to ask the doctor something, call add_question with their question in their words, then confirm it's on their list. If they ask a medical question you can't answer, offer to add it to their questions for the doctor.`;
+  }
+  return `${common}
+
+You help the patient understand their last doctor visit.
+Visit summary: ${vars.visit_summary_short}
+Medications: ${vars.medications}
+
+Before answering any question about the visit, call search_visit with the question. Answer ONLY from the passages it returns and the summary above. If the answer is not there, say you don't see that in their visit and they should call their clinic to ask. Never add anything beyond what the doctor said. If they want to ask the doctor something new, call add_question.`;
+}
+
+function chatTools(mode: "checkin" | "explainer"): Anthropic.Tool[] {
+  const tools: Anthropic.Tool[] = [
+    {
+      name: "add_question",
+      description: "Add a question to the patient's list for their doctor.",
+      strict: true,
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["question"],
+        properties: { question: { type: "string", description: "In the patient's own words" } },
+      },
+    },
+    {
+      name: "report_red_flag",
+      description: "Alert the patient's doctor about an emergency symptom. Call before telling them to call 911.",
+      strict: true,
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["symptom", "quote"],
+        properties: {
+          symptom: { type: "string", description: "In English, e.g. chest pain" },
+          quote: { type: "string", description: "The patient's exact words" },
+        },
+      },
+    },
+  ];
+  if (mode === "explainer") {
+    tools.push({
+      name: "search_visit",
+      description: "Search the transcript of the patient's last doctor visit. Returns the most relevant passages.",
+      strict: true,
+      input_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: { query: { type: "string" } },
+      },
+    });
+  }
+  return tools;
+}
+
+/**
+ * One chat reply: a manual tool-use loop (each tool writes to Convex through `tools`).
+ * `history` is oldest first and ends with the patient's newest message.
+ */
+export async function chatReply(args: {
+  mode: "checkin" | "explainer";
+  vars: Record<string, string>;
+  history: ChatTurn[];
+  tools: ChatTools;
+}): Promise<ChatReply> {
+  const messages: Anthropic.MessageParam[] = args.history.map((t) => ({
+    role: t.role,
+    content: t.text,
+  }));
+  const system = chatSystemPrompt(args.mode, args.vars);
+  const tools = chatTools(args.mode);
+  let redFlag = false;
+  const citations = new Map<number, ChatPassage>();
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const response = await anthropic().messages.create({
+      model: MODEL,
+      max_tokens: 4000,
+      output_config: { effort: "low" },
+      system,
+      tools,
+      messages,
+    });
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim();
+
+    if (response.stop_reason === "refusal") throw new Error("Claude declined the chat reply");
+    if (response.stop_reason !== "tool_use" || round === MAX_TOOL_ROUNDS) {
+      return { text, redFlag, citations: [...citations.values()] };
+    }
+
+    // Run every tool call from this turn and return all results in one user message.
+    messages.push({ role: "assistant", content: response.content });
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const block of response.content) {
+      if (block.type !== "tool_use") continue;
+      const input = block.input as Record<string, string>;
+      try {
+        let content: string;
+        if (block.name === "add_question") {
+          await args.tools.addQuestion(input.question);
+          content = "Added to the patient's questions for the doctor.";
+        } else if (block.name === "report_red_flag") {
+          redFlag = true; // the 911 screen opens even if the alert write fails
+          await args.tools.reportRedFlag(input.symptom, input.quote);
+          content = "The doctor has been alerted. Now tell the patient to call 911.";
+        } else if (block.name === "search_visit" && args.tools.searchVisit) {
+          const passages = await args.tools.searchVisit(input.query);
+          for (const p of passages) citations.set(p.chunkIndex, p);
+          content = passages.length
+            ? passages.map((p) => `[passage ${p.chunkIndex}]\n${p.textEnglish}`).join("\n\n")
+            : "No matching passages in this visit.";
+        } else {
+          throw new Error(`Unknown tool ${block.name}`);
+        }
+        results.push({ type: "tool_result", tool_use_id: block.id, content });
+      } catch (error) {
+        results.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: `Tool failed: ${error instanceof Error ? error.message : String(error)}`,
+          is_error: true,
+        });
+      }
+    }
+    messages.push({ role: "user", content: results });
+  }
+  throw new Error("unreachable");
+}

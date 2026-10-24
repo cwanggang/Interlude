@@ -1,8 +1,10 @@
 // The six shared components (plus TextField). Screens build only from these, so the design pass
 // restyles here.
-import type { ReactNode } from 'react';
+import { useNavigation } from 'expo-router';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text as RNText, TextInput, View, type TextStyle } from 'react-native';
 
+import { useTextScale } from '../textScale';
 import { theme, type Tone } from '../theme';
 
 export function Screen({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
@@ -34,9 +36,9 @@ export function Card({ title, tone = 'neutral', children }: { title?: string; to
   return (
     <View
       style={{
-        backgroundColor: tone === 'danger' ? theme.color.dangerBg : theme.color.surface,
+        backgroundColor: tone === 'danger' ? theme.color.dangerBg : tone === 'primary' ? theme.color.primaryBg : theme.color.surface,
         borderWidth: 1,
-        borderColor: tone === 'danger' ? theme.color.danger : theme.color.border,
+        borderColor: tone === 'danger' ? theme.color.danger : tone === 'primary' ? theme.color.primary : theme.color.border,
         borderRadius: theme.radius.md,
         padding: theme.space.lg,
         gap: theme.space.md,
@@ -61,6 +63,7 @@ export function Button({
   disabled?: boolean;
   big?: boolean;
 }) {
+  const scale = useTextScale();
   const bg = variant === 'primary' ? theme.color.primary : variant === 'danger' ? theme.color.danger : theme.color.surface;
   const fg = variant === 'secondary' ? theme.color.text : theme.color.primaryText;
   return (
@@ -80,7 +83,7 @@ export function Button({
         opacity: disabled ? 0.5 : pressed ? 0.8 : 1,
       })}
     >
-      <RNText style={{ color: fg, fontSize: big ? theme.font.size.lg : theme.font.size.md, fontWeight: '600', textAlign: 'center' }}>
+      <RNText style={{ color: fg, fontSize: (big ? theme.font.size.lg : theme.font.size.md) * scale, fontWeight: '600', textAlign: 'center' }}>
         {label}
       </RNText>
     </Pressable>
@@ -97,7 +100,9 @@ const textStyles: Record<'title' | 'heading' | 'body' | 'muted' | 'quote' | 'err
 };
 
 export function Text({ variant = 'body', children }: { variant?: keyof typeof textStyles; children: ReactNode }) {
-  return <RNText style={textStyles[variant]}>{children}</RNText>;
+  const scale = useTextScale();
+  const style = textStyles[variant];
+  return <RNText style={{ ...style, fontSize: (style.fontSize ?? theme.font.size.md) * scale }}>{children}</RNText>;
 }
 
 const badgeColors: Record<Tone, { bg: string; fg: string }> = {
@@ -109,9 +114,10 @@ const badgeColors: Record<Tone, { bg: string; fg: string }> = {
 
 export function Badge({ tone = 'neutral', label }: { tone?: Tone; label: string }) {
   const c = badgeColors[tone];
+  const scale = useTextScale();
   return (
     <View style={{ backgroundColor: c.bg, borderRadius: 999, paddingHorizontal: theme.space.sm, paddingVertical: 2, alignSelf: 'flex-start' }}>
-      <RNText style={{ color: c.fg, fontSize: theme.font.size.sm }}>{label}</RNText>
+      <RNText style={{ color: c.fg, fontSize: theme.font.size.sm * scale }}>{label}</RNText>
     </View>
   );
 }
@@ -211,4 +217,13 @@ export function Choice<T extends string>({ value, options, onChange }: { value: 
       ))}
     </View>
   );
+}
+
+/** Sets the header title (and optional right-hand item) of whichever navigator shows this screen. */
+export function ScreenTitle({ title, right }: { title: string; right?: ReactNode }) {
+  const navigation = useNavigation();
+  useLayoutEffect(() => {
+    navigation.setOptions({ title, headerRight: right ? () => right : undefined });
+  }, [navigation, title, right]);
+  return null;
 }
