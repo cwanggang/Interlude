@@ -7,10 +7,14 @@
 import { Client } from "@elastic/elasticsearch";
 import { v, type Infer } from "convex/values";
 import { action, internalAction } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 // Verified on our project with `npx convex run elastic:diagnose`; see elastic/NOTES.md.
 const EMBEDDING_ID = ".jina-embeddings-v5-text-small";
+// v3.5 on the bilingual field ranked best for English and Spanish queries; see elastic/NOTES.md.
+const RERANK_ID = ".jina-reranker-v3.5";
+// Reranker scores for unrelated queries stayed under 1.0 on the seed data; tune if results get thin.
+const RERANK_MIN_SCORE = 1.0;
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -58,6 +62,8 @@ const MAPPINGS = {
       language: { type: "keyword" },
       quote_original: { type: "text", copy_to: "quote_semantic" },
       quote_english: { type: "text" },
+      // Both languages in one string: the reranker scores best when the query's language is present
+      quote_bilingual: { type: "text", index: false },
       quote_semantic: { type: "semantic_text", inference_id: EMBEDDING_ID },
     },
   },
@@ -107,6 +113,15 @@ type CheckinArgs = {
   quoteEnglish: string;
 };
 
+type CheckinSource = {
+  symptom_entry_id: string;
+  date: string;
+  symptom: string;
+  language: string;
+  quote_original: string;
+  quote_english: string;
+};
+
 function checkinDoc(a: CheckinArgs) {
   return {
     symptom_entry_id: a.symptomEntryId,
@@ -120,6 +135,8 @@ function checkinDoc(a: CheckinArgs) {
     language: a.language,
     quote_original: a.quoteOriginal,
     quote_english: a.quoteEnglish,
+    quote_bilingual: `${a.quoteOriginal}
+${a.quoteEnglish}`,
   };
 }
 
@@ -280,16 +297,52 @@ const timelineSeries = v.object({
 export const timeline = action({
   args: { patientId: v.id("patients"), days: v.optional(v.number()) },
   returns: v.array(timelineSeries),
-  handler: async (_ctx, _args): Promise<Infer<typeof timelineSeries>[]> => {
-    return [
-      {
-        symptom: "dizziness",
-        points: [
-          { date: "2026-10-22", severity: 5 },
-          { date: "2026-10-23", severity: 6 },
-        ],
+  handler: async (ctx, args): Promise<Infer<typeof timelineSeries>[]> => {
+    const patient = await ctx.runQuery(api.patients.get, { patientId: args.patientId });
+    if (!patient) return [];
+    await ensureOnce();
+    // Check-in dates are the patient's local calendar day, stored as UTC midnight. So bucket in
+    // UTC, and compute the window's last day ("today") in the patient's own time zone.
+    const days = args.days ?? 14;
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: patient.timezone }).format(new Date());
+    const from = new Date(Date.parse(today) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    const res = await es().search({
+      index: indexName("checkins"),
+      size: 0,
+      query: {
+        bool: {
+          filter: [
+            { term: { patient_id: args.patientId } },
+            { range: { date: { gte: from, lte: today } } },
+          ],
+        },
       },
-    ];
+      aggs: {
+        by_symptom: {
+          terms: { field: "symptom", size: 20 },
+          aggs: {
+            by_day: {
+              date_histogram: {
+                field: "date",
+                calendar_interval: "day",
+                format: "yyyy-MM-dd",
+                min_doc_count: 0,
+                extended_bounds: { min: from, max: today },
+              },
+              aggs: { max_severity: { max: { field: "severity" } } },
+            },
+          },
+        },
+      },
+    });
+    type DayBucket = { key_as_string: string; max_severity: { value: number | null } };
+    type SymptomBucket = { key: string; by_day: { buckets: DayBucket[] } };
+    const buckets = (res.aggregations?.by_symptom as { buckets: SymptomBucket[] } | undefined)?.buckets ?? [];
+    return buckets.map((b) => ({
+      symptom: b.key,
+      // max over no docs (or docs with no severity) is null: "not reported", not 0
+      points: b.by_day.buckets.map((d) => ({ date: d.key_as_string, severity: d.max_severity.value })),
+    }));
   },
 });
 
@@ -307,8 +360,56 @@ const checkinHit = v.object({
 export const searchCheckins = action({
   args: { patientId: v.id("patients"), query: v.string() },
   returns: v.array(checkinHit),
-  handler: async (_ctx, _args): Promise<Infer<typeof checkinHit>[]> => {
-    return [];
+  handler: async (_ctx, args): Promise<Infer<typeof checkinHit>[]> => {
+    const query = args.query.trim();
+    if (!query) return [];
+    await ensureOnce();
+    const patientFilter = { term: { patient_id: args.patientId } };
+    const res = await es().search<CheckinSource>({
+      index: indexName("checkins"),
+      size: 10,
+      _source: ["symptom_entry_id", "date", "symptom", "language", "quote_original", "quote_english"],
+      retriever: {
+        text_similarity_reranker: {
+          retriever: {
+            rrf: {
+              retrievers: [
+                // Meaning across languages: "dizziness" finds "mareo"
+                { standard: { query: { semantic: { field: "quote_semantic", query } }, filter: patientFilter } },
+                // Exact strings embeddings blur: drug names, doses
+                {
+                  standard: {
+                    query: { multi_match: { query, fields: ["quote_original", "quote_english"] } },
+                    filter: patientFilter,
+                  },
+                },
+              ],
+              rank_window_size: 50,
+            },
+          },
+          field: "quote_bilingual",
+          inference_id: RERANK_ID,
+          inference_text: query,
+          rank_window_size: 50,
+        },
+      },
+    });
+    // Filtered here: the retriever's own min_score returned nothing at any threshold we tried.
+    return res.hits.hits.flatMap((h) =>
+      h._source && (h._score ?? 0) >= RERANK_MIN_SCORE
+        ? [
+            {
+              symptomEntryId: h._source.symptom_entry_id,
+              date: h._source.date,
+              symptom: h._source.symptom,
+              language: h._source.language,
+              quoteOriginal: h._source.quote_original,
+              quoteEnglish: h._source.quote_english,
+              score: h._score ?? 0,
+            },
+          ]
+        : [],
+    );
   },
 });
 
@@ -388,3 +489,4 @@ export const reindexAll = internalAction({
     return null;
   },
 });
+
