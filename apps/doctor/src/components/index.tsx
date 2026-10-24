@@ -35,6 +35,7 @@ export function Card({ title, actions, tone = 'neutral', children }: { title?: R
         borderRadius: theme.radius.md,
         padding: theme.space.lg,
         display: 'grid',
+        alignContent: 'start',
         gap: theme.space.md,
       }}
     >
