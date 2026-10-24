@@ -23,6 +23,8 @@ export default function RootLayout() {
         >
           {/* The tabs have their own headers; history, prep, summaries and notifications open on top. */}
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="chat" options={{ presentation: 'modal', headerBackVisible: false }} />
+          <Stack.Screen name="emergency" options={{ presentation: 'fullScreenModal', headerShown: false, gestureEnabled: false }} />
         </Stack>
       </TextScaleProvider>
     </ConvexProvider>
