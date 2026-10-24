@@ -1,4 +1,4 @@
-// TRACK B owns this file. STUB: validators are the contract; bodies are fake.
+// TRACK B owns this file.
 // Alerts are inserted by Track A (pipeline.ts) from the /cartesia/red-flag webhook.
 import { v, type Infer } from "convex/values";
 import { mutation, query } from "./_generated/server";
@@ -18,8 +18,12 @@ const alertDoc = v.object({
 export const listForPatient = query({
   args: { patientId: v.id("patients") },
   returns: v.array(alertDoc),
-  handler: async (): Promise<Infer<typeof alertDoc>[]> => {
-    return [];
+  handler: async (ctx, args): Promise<Infer<typeof alertDoc>[]> => {
+    return await ctx.db
+      .query("alerts")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .order("desc")
+      .take(100);
   },
 });
 
@@ -27,15 +31,18 @@ export const listForPatient = query({
 export const listOpen = query({
   args: {},
   returns: v.array(alertDoc),
-  handler: async (): Promise<Infer<typeof alertDoc>[]> => {
-    return [];
+  handler: async (ctx): Promise<Infer<typeof alertDoc>[]> => {
+    // Demo-sized table: scan the newest alerts rather than adding an index to the shared schema.
+    const recent = await ctx.db.query("alerts").order("desc").take(200);
+    return recent.filter((a) => !a.acknowledged);
   },
 });
 
 export const acknowledge = mutation({
   args: { alertId: v.id("alerts") },
   returns: v.null(),
-  handler: async () => {
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.alertId, { acknowledged: true });
     return null;
   },
 });

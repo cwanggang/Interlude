@@ -1,8 +1,8 @@
-// TRACK B owns this file. STUB: validators are the contract; bodies are fake.
-// Stub handlers annotate their return type from the validator so the generated
-// API exposes the real shape; keep the annotations when implementing.
+// TRACK B owns this file.
+// Handlers annotate their return type from the validator so the generated API
+// exposes the real shape.
 import { v, type Infer } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalQuery, mutation, query } from "./_generated/server";
 
 const language = v.union(v.literal("en"), v.literal("es"));
 
@@ -82,16 +82,39 @@ const conversationRow = v.object({
 export const list = query({
   args: {},
   returns: v.array(patientListRow),
-  handler: async (): Promise<Infer<typeof patientListRow>[]> => {
-    return [];
+  handler: async (ctx): Promise<Infer<typeof patientListRow>[]> => {
+    const patients = await ctx.db.query("patients").take(100);
+    return await Promise.all(
+      patients.map(async (patient) => {
+        const appointments = await ctx.db
+          .query("appointments")
+          .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+          .take(100);
+        const next = appointments
+          .filter((a) => a.status === "upcoming")
+          .sort((a, b) => a.scheduledAt - b.scheduledAt)[0];
+        const alerts = await ctx.db
+          .query("alerts")
+          .withIndex("by_patient", (q) => q.eq("patientId", patient._id))
+          .order("desc")
+          .take(100);
+        return {
+          patient,
+          nextAppointment: next
+            ? { _id: next._id, doctorName: next.doctorName, scheduledAt: next.scheduledAt }
+            : null,
+          openAlerts: alerts.filter((a) => !a.acknowledged).length,
+        };
+      }),
+    );
   },
 });
 
 export const get = query({
   args: { patientId: v.id("patients") },
   returns: maybePatient,
-  handler: async (): Promise<Infer<typeof maybePatient>> => {
-    return null;
+  handler: async (ctx, args): Promise<Infer<typeof maybePatient>> => {
+    return await ctx.db.get(args.patientId);
   },
 });
 
@@ -99,8 +122,8 @@ export const get = query({
 export const getDemo = query({
   args: {},
   returns: maybePatient,
-  handler: async (): Promise<Infer<typeof maybePatient>> => {
-    return null;
+  handler: async (ctx): Promise<Infer<typeof maybePatient>> => {
+    return await ctx.db.query("patients").first();
   },
 });
 
@@ -125,7 +148,11 @@ export const update = mutation({
     reasonForVisit: v.optional(v.string()),
   },
   returns: v.null(),
-  handler: async () => {
+  handler: async (ctx, { patientId, ...fields }) => {
+    const changes = Object.fromEntries(
+      Object.entries(fields).filter(([, value]) => value !== undefined),
+    );
+    await ctx.db.patch(patientId, changes);
     return null;
   },
 });
@@ -134,8 +161,12 @@ export const update = mutation({
 export const symptomEntries = query({
   args: { patientId: v.id("patients") },
   returns: v.array(symptomEntryDoc),
-  handler: async (): Promise<Infer<typeof symptomEntryDoc>[]> => {
-    return [];
+  handler: async (ctx, args): Promise<Infer<typeof symptomEntryDoc>[]> => {
+    return await ctx.db
+      .query("symptomEntries")
+      .withIndex("by_patient_date", (q) => q.eq("patientId", args.patientId))
+      .order("desc")
+      .take(500);
   },
 });
 
@@ -143,8 +174,12 @@ export const symptomEntries = query({
 export const medicationEvents = query({
   args: { patientId: v.id("patients") },
   returns: v.array(medicationEventDoc),
-  handler: async (): Promise<Infer<typeof medicationEventDoc>[]> => {
-    return [];
+  handler: async (ctx, args): Promise<Infer<typeof medicationEventDoc>[]> => {
+    return await ctx.db
+      .query("medicationEvents")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .order("desc")
+      .take(500);
   },
 });
 
@@ -152,7 +187,65 @@ export const medicationEvents = query({
 export const conversations = query({
   args: { patientId: v.id("patients") },
   returns: v.array(conversationRow),
-  handler: async (): Promise<Infer<typeof conversationRow>[]> => {
-    return [];
+  handler: async (ctx, args): Promise<Infer<typeof conversationRow>[]> => {
+    const rows = await ctx.db
+      .query("conversations")
+      .withIndex("by_patient", (q) => q.eq("patientId", args.patientId))
+      .order("desc")
+      .take(100);
+    return rows.map((c) => ({
+      _id: c._id,
+      mode: c.mode,
+      channel: c.channel,
+      status: c.status,
+      startedAt: c.startedAt,
+      summaryEnglish: c.summaryEnglish,
+    }));
+  },
+});
+
+const checkinForIndex = v.object({
+  symptomEntryId: v.id("symptomEntries"),
+  patientId: v.id("patients"),
+  appointmentId: v.id("appointments"),
+  conversationId: v.id("conversations"),
+  date: v.string(),
+  symptom: v.string(),
+  severity: v.optional(v.number()),
+  change: v.optional(v.string()),
+  language: v.string(),
+  quoteOriginal: v.string(),
+  quoteEnglish: v.string(),
+});
+
+/** For elastic.reindexAll: every symptom entry in indexCheckin's arg shape. Demo-sized data. */
+export const symptomEntriesForIndex = internalQuery({
+  args: {},
+  returns: v.array(checkinForIndex),
+  handler: async (ctx): Promise<Infer<typeof checkinForIndex>[]> => {
+    const entries = await ctx.db.query("symptomEntries").take(5000);
+    const languages = new Map<string, string>();
+    const result: Infer<typeof checkinForIndex>[] = [];
+    for (const e of entries) {
+      let language = languages.get(e.conversationId);
+      if (language === undefined) {
+        language = (await ctx.db.get(e.conversationId))?.language ?? "en";
+        languages.set(e.conversationId, language);
+      }
+      result.push({
+        symptomEntryId: e._id,
+        patientId: e.patientId,
+        appointmentId: e.appointmentId,
+        conversationId: e.conversationId,
+        date: e.date,
+        symptom: e.symptom,
+        severity: e.severity,
+        change: e.change,
+        language,
+        quoteOriginal: e.quoteOriginal,
+        quoteEnglish: e.quoteEnglish,
+      });
+    }
+    return result;
   },
 });
