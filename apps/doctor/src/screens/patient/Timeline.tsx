@@ -1,4 +1,4 @@
-// C2: daily max severity per symptom from Elastic, with medication markers.
+// C2: daily max severity per symptom from Elastic, with visit and medication markers.
 // elastic.timeline is an action (not reactive), so it is re-fetched whenever the patient's
 // processed conversations change. Track A indexes before marking a call processed.
 import { useEffect, useMemo, useState } from 'react'
@@ -11,14 +11,14 @@ import { Card, Text } from '../../components'
 import { formatDay } from '../../format'
 import { theme } from '../../theme'
 
-type Series = FunctionReturnType<typeof api.elastic.timeline>
+type Result = FunctionReturnType<typeof api.elastic.timeline>
 type Row = { date: string } & Record<string, number | null | string>
 
 export default function Timeline({ patientId, selectedDate, onSelectDate }: { patientId: Id<'patients'>; selectedDate: string | null; onSelectDate: (date: string | null) => void }) {
   const conversations = useQuery(api.patients.conversations, { patientId })
   const medications = useQuery(api.patients.medicationEvents, { patientId })
   const fetchTimeline = useAction(api.elastic.timeline)
-  const [series, setSeries] = useState<Series | null>(null)
+  const [result, setResult] = useState<Result | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const refreshKey = conversations
@@ -30,9 +30,9 @@ export default function Timeline({ patientId, selectedDate, onSelectDate }: { pa
     if (refreshKey === undefined) return
     let cancelled = false
     fetchTimeline({ patientId, days: 14 })
-      .then((s) => {
+      .then((r) => {
         if (!cancelled) {
-          setSeries(s)
+          setResult(r)
           setError(null)
         }
       })
@@ -44,6 +44,7 @@ export default function Timeline({ patientId, selectedDate, onSelectDate }: { pa
     }
   }, [refreshKey, patientId, fetchTimeline])
 
+  const series = result?.series ?? null
   const rows = useMemo<Row[]>(() => {
     if (!series) return []
     const byDate = new Map<string, Row>()
@@ -83,6 +84,15 @@ export default function Timeline({ patientId, selectedDate, onSelectDate }: { pa
               <YAxis domain={[0, 10]} allowDecimals={false} />
               <Tooltip labelFormatter={(label) => formatDay(String(label))} />
               <Legend />
+              {result?.visitDates.filter((d) => dates.has(d)).map((d) => (
+                <ReferenceLine
+                  key={`visit-${d}`}
+                  x={d}
+                  stroke={theme.color.primary}
+                  strokeWidth={2}
+                  label={{ value: 'Visit', position: 'insideTopRight', fontSize: theme.font.size.sm, fill: theme.color.primary }}
+                />
+              ))}
               {markers.map((m) => (
                 <ReferenceLine
                   key={m._id}

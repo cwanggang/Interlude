@@ -55,6 +55,7 @@ export const save = internalMutation({
     appointmentId: v.id("appointments"),
     textEnglish: v.string(),
     source,
+    sections: v.optional(briefSections),
   },
   returns: v.id("briefs"),
   handler: async (ctx, args) => {
