@@ -10,6 +10,7 @@ import { action, internalAction, type ActionCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { FunctionReturnType } from "convex/server";
 import { api, internal } from "./_generated/api";
+import { briefSections } from "./briefs";
 
 // Verified on our project with `npx convex run elastic:diagnose`; see elastic/NOTES.md.
 const EMBEDDING_ID = ".jina-embeddings-v5-text-small";
@@ -183,7 +184,7 @@ function agentTools() {
       configuration: {
         query: `FROM ${indexName("checkins")}
 | WHERE patient_id == ?patient_id
-| KEEP date, symptom, severity, change, quote_original, quote_english, conversation_id
+| KEEP symptom_entry_id, date, symptom, severity, change, quote_original, quote_english, conversation_id
 | SORT date ASC
 | LIMIT 200`,
         params: { patient_id: { type: "string", description: "The patient ID given in the question" } },
@@ -252,6 +253,72 @@ function workflowId(): string {
   return `${(process.env.ELASTIC_INDEX_PREFIX ?? "").replace(/_/g, "-")}pre-visit-brief`;
 }
 
+/**
+ * H8: the brief as JSON sections, each line citing check-in entries by symptom_entry_id. Shared by
+ * the Workflow (with {{ inputs.* }} placeholders) and the fallback. No "{{" or "}}" in the JSON
+ * example, so the Workflow's template engine leaves it alone.
+ */
+function briefPrompt(patientId: string, appointmentId: string, questions: string): string {
+  return [
+    `Patient ID: ${patientId}. Appointment ID: ${appointmentId}.`,
+    "Write a pre-visit brief for the doctor using only the daily check-ins (not visit passages).",
+    "Reply with only one JSON object, no markdown, in this shape:",
+    '{"overview": "<at most 60 words: symptom trends with dates, glucose readings, medication changes or missed doses, red flags>",',
+    '"concerns": [ {"text": "<one concern the patient reported, at most 20 words>", "citations": [ {"symptom_entry_id": "<symptom_entry_id exactly as returned>", "date": "YYYY-MM-DD", "quote": "<quote_original exactly as returned>"} ] } ],',
+    '"topics": [ {"text": "<one topic for the doctor to review, at most 20 words>", "citations": [ ] } ] }.',
+    "Give at most 4 concerns, each citing 1 or 2 quotes, and at most 4 topics; include the patient's open questions as topics.",
+    `The patient's open questions are: ${questions}`,
+  ].join(" ");
+}
+
+type BriefSections = Infer<typeof briefSections>;
+
+/**
+ * Parses briefPrompt's JSON (ignoring markdown fences and the CITATIONS line) and resolves each
+ * citation to a real check-in entry of this patient, by id or else by exact quote. Citations that
+ * match nothing are dropped, so every link shows the patient's actual words. Null if not JSON.
+ */
+function parseBrief(
+  message: string,
+  entries: { _id: string; date: string; quoteOriginal: string; quoteEnglish: string }[],
+): BriefSections | null {
+  const { answer } = splitCitations(message);
+  const start = answer.indexOf("{");
+  const end = answer.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  type RawItem = { text?: unknown; citations?: { symptom_entry_id?: unknown; quote?: unknown }[] };
+  let raw: { overview?: unknown; concerns?: RawItem[]; topics?: RawItem[] };
+  try {
+    raw = JSON.parse(answer.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  if (typeof raw.overview !== "string") return null;
+  const byId = new Map(entries.map((e) => [e._id, e]));
+  const byQuote = new Map(entries.map((e) => [e.quoteOriginal.trim(), e]));
+  const items = (list: RawItem[] | undefined) =>
+    (Array.isArray(list) ? list : []).flatMap((item) => {
+      if (typeof item.text !== "string") return [];
+      const seen = new Set<string>();
+      const citations = (Array.isArray(item.citations) ? item.citations : []).flatMap((c) => {
+        const entry =
+          (typeof c.symptom_entry_id === "string" && byId.get(c.symptom_entry_id)) ||
+          (typeof c.quote === "string" && byQuote.get(c.quote.trim()));
+        if (!entry || seen.has(entry._id)) return [];
+        seen.add(entry._id);
+        return [{ symptomEntryId: entry._id, date: entry.date, quoteOriginal: entry.quoteOriginal, quoteEnglish: entry.quoteEnglish }];
+      });
+      return [{ text: item.text, citations }];
+    });
+  return { overview: raw.overview, concerns: items(raw.concerns), topics: items(raw.topics) };
+}
+
+/** The plain-text version kept in briefs.textEnglish. */
+function briefText(sections: BriefSections): string {
+  const lines = (title: string, list: { text: string }[]) => (list.length ? ` ${title}: ${list.map((i) => i.text).join("; ")}.` : "");
+  return `${sections.overview}${lines("Concerns", sections.concerns)}${lines("To review", sections.topics)}`;
+}
+
 function workflowYaml(): string {
   return `version: "1"
 name: ${workflowId()}
@@ -275,11 +342,7 @@ steps:
     agent-id: ${agentId()}
     with:
       message: >-
-        Patient ID: {{ inputs.patient_id }}. Appointment ID: {{ inputs.appointment_id }}.
-        Write a pre-visit brief for the doctor in one paragraph of at most 110 words, using only
-        the daily check-ins (not visit passages): symptom trends with dates, glucose readings,
-        medication changes or missed doses, and red flags. End with the patient's open questions,
-        which are: {{ inputs.questions }}
+        ${briefPrompt("{{ inputs.patient_id }}", "{{ inputs.appointment_id }}", "{{ inputs.questions }}")}
 `;
 }
 
@@ -349,15 +412,13 @@ async function writeBrief(
   } catch (e) {
     console.warn("elastic.generateBrief: workflow failed, calling the agent directly", e);
     source = "fallback";
-    ({ message } = await converse(
-      `Patient ID: ${patientId}. Appointment ID: ${appointmentId}. Write a pre-visit brief for the doctor ` +
-        `in one paragraph of at most 110 words, using only the daily check-ins: symptom trends with dates, ` +
-        `glucose readings, medication changes or missed doses, and red flags. End with the patient's open ` +
-        `questions, which are: ${openQuestions}`,
-    ));
+    ({ message } = await converse(briefPrompt(patientId, appointmentId, openQuestions)));
   }
-  const { answer } = splitCitations(message);
-  await ctx.runMutation(internal.briefs.save, { patientId, appointmentId, textEnglish: answer, source });
+  const entries = await ctx.runQuery(api.patients.symptomEntries, { patientId });
+  const sections = parseBrief(message, entries);
+  // An answer that isn't the requested JSON is still saved, as plain text without sections.
+  const textEnglish = sections ? briefText(sections) : splitCitations(message).answer;
+  await ctx.runMutation(internal.briefs.save, { patientId, appointmentId, textEnglish, source, sections: sections ?? undefined });
 }
 
 /** Creates or updates this deployment's Agent Builder tools, agent, and pre-visit-brief Workflow. */
@@ -599,23 +660,40 @@ const timelineSeries = v.object({
   points: v.array(v.object({ date: v.string(), severity: v.union(v.number(), v.null()) })),
 });
 
+const timelineResult = v.object({
+  series: v.array(timelineSeries),
+  /** G13 / C2 visit markers: completed visit days in the window, in the patient's timezone. */
+  visitDates: v.array(v.string()),
+});
+
+const MAX_TIMELINE_DAYS = 120;
+
 /**
- * C2 timeline: max severity per symptom per day (terms → date_histogram → max), last `days`
- * (default 14). Days with no report are null, not 0. Actions aren't reactive: the dashboard
- * re-calls this whenever patients.conversations changes.
+ * C2 / G13 timeline: max severity per symptom per day (terms → date_histogram → max), from `from`
+ * ("YYYY-MM-DD", e.g. the last visit) or the last `days` (default 14), through today. Days with
+ * no report are null, not 0. Actions aren't reactive: callers re-call this when
+ * patients.conversations changes.
  */
 export const timeline = action({
-  args: { patientId: v.id("patients"), days: v.optional(v.number()) },
-  returns: v.array(timelineSeries),
-  handler: async (ctx, args): Promise<Infer<typeof timelineSeries>[]> => {
+  args: { patientId: v.id("patients"), days: v.optional(v.number()), from: v.optional(v.string()) },
+  returns: timelineResult,
+  handler: async (ctx, args): Promise<Infer<typeof timelineResult>> => {
     const patient = await ctx.runQuery(api.patients.get, { patientId: args.patientId });
-    if (!patient) return [];
+    if (!patient) return { series: [], visitDates: [] };
     await ensureOnce();
     // Check-in dates are the patient's local calendar day, stored as UTC midnight. So bucket in
     // UTC, and compute the window's last day ("today") in the patient's own time zone.
-    const days = args.days ?? 14;
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: patient.timezone }).format(new Date());
-    const from = new Date(Date.parse(today) - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+    const earliest = new Date(Date.parse(today) - (MAX_TIMELINE_DAYS - 1) * 86_400_000).toISOString().slice(0, 10);
+    const from =
+      args.from && /^\d{4}-\d{2}-\d{2}$/.test(args.from)
+        ? [args.from, earliest].sort()[1] // no earlier than MAX_TIMELINE_DAYS ago
+        : new Date(Date.parse(today) - ((args.days ?? 14) - 1) * 86_400_000).toISOString().slice(0, 10);
+    const appointments = await ctx.runQuery(api.appointments.listForPatient, { patientId: args.patientId });
+    const visitDates = appointments
+      .filter((a) => a.status === "completed")
+      .map((a) => new Intl.DateTimeFormat("en-CA", { timeZone: patient.timezone }).format(new Date(a.scheduledAt)))
+      .filter((d) => d >= from && d <= today);
     const res = await es().search({
       index: indexName("checkins"),
       size: 0,
@@ -648,11 +726,12 @@ export const timeline = action({
     type DayBucket = { key_as_string: string; max_severity: { value: number | null } };
     type SymptomBucket = { key: string; by_day: { buckets: DayBucket[] } };
     const buckets = (res.aggregations?.by_symptom as { buckets: SymptomBucket[] } | undefined)?.buckets ?? [];
-    return buckets.map((b) => ({
+    const series = buckets.map((b) => ({
       symptom: b.key,
       // max over no docs (or docs with no severity) is null: "not reported", not 0
       points: b.by_day.buckets.map((d) => ({ date: d.key_as_string, severity: d.max_severity.value })),
     }));
+    return { series, visitDates };
   },
 });
 
