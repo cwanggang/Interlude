@@ -1,7 +1,7 @@
 // TRACK A owns this file. Every Claude call goes through here (claude-sonnet-5-5).
 // Extraction uses structured outputs (output_config.format) so the result always parses;
 // Sonnet 5.5 rejects a forced tool_choice, so the spec's record_checkin schema is sent as
-// the output format instead. cleanVisitTranscript and summarizeVisit are still stubs.
+// the output format instead. Every structured call follows the same pattern.
 import Anthropic from "@anthropic-ai/sdk";
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
@@ -170,28 +170,172 @@ export async function translate(text: string, to: "en" | "es"): Promise<string> 
   return textOf(message);
 }
 
-/** D2: label speakers (doctor, patient, interpreter), clean up, and translate each turn. */
-export async function cleanVisitTranscript(
-  _rawText: string,
-  _patientLanguage: string,
-): Promise<{ speaker: string; textEnglish: string; textPatientLang: string }[]> {
-  return [];
+async function structured<T>(args: {
+  system: string;
+  user: string;
+  schema: Record<string, unknown>;
+  effort: "low" | "medium" | "high";
+}): Promise<T> {
+  const message = await anthropic().messages.create({
+    model: MODEL,
+    max_tokens: 16000,
+    output_config: { effort: args.effort, format: { type: "json_schema", schema: args.schema } },
+    system: args.system,
+    messages: [{ role: "user", content: args.user }],
+  });
+  if (message.stop_reason === "max_tokens") throw new Error("Claude output was cut off");
+  return JSON.parse(textOf(message)) as T;
 }
+
+const languageName = (code: string) => (code === "es" ? "Spanish" : "English");
+
+export type VisitTurn = { speaker: string; textEnglish: string; textPatientLang: string };
+
+const turnsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["turns"],
+  properties: {
+    turns: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["speaker", "text_english", "text_patient_lang"],
+        properties: {
+          speaker: { type: "string", enum: ["doctor", "patient", "interpreter", "other"] },
+          text_english: { type: "string" },
+          text_patient_lang: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+/**
+ * D2: label speakers (doctor, patient, interpreter), clean up, and translate each turn.
+ * `passes` maps a language code to a raw speech-to-text pass run in that language; for a
+ * mixed-language visit each pass is accurate for its own language and garbled for the other.
+ */
+export async function cleanVisitTranscript(
+  passes: Record<string, string>,
+  patientLanguage: string,
+): Promise<VisitTurn[]> {
+  const patientLang = languageName(patientLanguage);
+  const raw = Object.entries(passes)
+    .map(([lang, text]) => `=== Pass transcribed as ${languageName(lang)} ===\n${text}`)
+    .join("\n\n");
+  const result = await structured<{
+    turns: { speaker: string; text_english: string; text_patient_lang: string }[];
+  }>({
+    effort: "medium",
+    system: `You turn raw speech-to-text of a doctor visit into a clean transcript. The doctor usually speaks English; the patient speaks ${patientLang}; there may be an interpreter.
+
+You may get more than one raw pass of the same audio, each run as a different language. Each pass is reliable for speech in its own language and unreliable for the other; combine them so every turn uses the pass that matches what was actually spoken.
+
+Rules:
+- Split the conversation into turns and label each speaker: doctor, patient, interpreter, or other. Infer speakers from content (the doctor examines, prescribes, explains; the patient describes symptoms).
+- Clean up filler words, false starts and obvious recognition errors, but never change medical content. Keep every medication name, dose, number, and instruction exactly as spoken.
+- text_english is the turn in English; text_patient_lang is the turn in ${patientLang}. Translate whichever one wasn't spoken. If the patient language is English, both fields are the same.
+- Do not add, drop, or summarize anything that was said.`,
+    user: raw,
+    schema: turnsSchema,
+  });
+  return result.turns.map((t) => ({
+    speaker: t.speaker,
+    textEnglish: t.text_english,
+    textPatientLang: t.text_patient_lang,
+  }));
+}
+
+const summarySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["assessment", "medications", "instructions", "tests_ordered", "follow_up", "warning_signs"],
+  properties: {
+    assessment: { type: "string" },
+    medications: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "dose", "schedule", "purpose"],
+        properties: {
+          name: { type: "string" },
+          dose: { type: "string" },
+          schedule: { type: "string" },
+          purpose: { type: "string" },
+        },
+      },
+    },
+    instructions: { type: "array", items: { type: "string" } },
+    tests_ordered: { type: "array", items: { type: "string" } },
+    follow_up: { type: "string" },
+    warning_signs: { type: "array", items: { type: "string" } },
+  },
+};
+
+const transcriptText = (turns: { speaker: string; textEnglish: string }[]) =>
+  turns.map((t) => `${t.speaker}: ${t.textEnglish}`).join("\n");
 
 /** D3: English summary, then a plain-reading-level patient-language version. */
 export async function summarizeVisit(
-  _transcript: { speaker: string; textEnglish: string }[],
-  _patientLanguage: string,
+  transcript: { speaker: string; textEnglish: string }[],
+  patientLanguage: string,
 ): Promise<{ english: VisitSummary; patientLang: VisitSummary }> {
-  const empty: VisitSummary = {
-    assessment: "",
-    medications: [],
-    instructions: [],
-    tests_ordered: [],
-    follow_up: "",
-    warning_signs: [],
-  };
-  return { english: empty, patientLang: empty };
+  const english = await structured<VisitSummary>({
+    effort: "medium",
+    system: `You summarize a doctor visit for the patient's record. Use only what the doctor said in the transcript; never add advice, doses, or tests that weren't stated. Leave a field empty ("" or []) if the visit didn't cover it.
+- assessment: the doctor's assessment in two or three sentences.
+- medications: every medication the patient should take after this visit, including unchanged ones the doctor mentioned. dose and schedule exactly as stated; purpose in a few words, only if the doctor gave it or it is unambiguous.
+- instructions: what the patient should do, one item each.
+- tests_ordered, follow_up, warning_signs: as stated by the doctor.`,
+    user: transcriptText(transcript),
+    schema: summarySchema,
+  });
+  const patientLang = await structured<VisitSummary>({
+    effort: "low",
+    system: `Rewrite this visit summary for the patient in ${languageName(patientLanguage)}, at a plain reading level (short sentences, everyday words, about a 5th-grade level). Keep every medication name, dose, number and schedule exactly; write schedules in everyday terms (for example "con el desayuno"). Do not add or drop anything. Keep the same JSON fields.`,
+    user: JSON.stringify(english),
+    schema: summarySchema,
+  });
+  return { english, patientLang };
+}
+
+export type QuestionCoverage = { id: string; answered: boolean; evidence: string | null };
+
+/** D4: for each queued question, was it answered in the visit, and which line shows it. */
+export async function checkQuestionCoverage(
+  questions: { id: string; textEnglish: string }[],
+  transcript: { speaker: string; textEnglish: string }[],
+): Promise<QuestionCoverage[]> {
+  if (questions.length === 0) return [];
+  const result = await structured<{ results: QuestionCoverage[] }>({
+    effort: "low",
+    system: `You check which of a patient's prepared questions were answered during their doctor visit. A question counts as answered only if the doctor (or interpreter relaying the doctor) addressed it in the transcript. evidence is the shortest transcript quote, in English, that shows the answer, or null if unanswered. Return one result per question id.`,
+    user: `Questions:\n${questions.map((q) => `${q.id}: ${q.textEnglish}`).join("\n")}\n\nTranscript:\n${transcriptText(transcript)}`,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["results"],
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "answered", "evidence"],
+            properties: {
+              id: { type: "string" },
+              answered: { type: "boolean" },
+              evidence: { type: ["string", "null"] },
+            },
+          },
+        },
+      },
+    },
+  });
+  return result.results;
 }
 
 // ---- Cross-track: scheduled by Track B's questions.add for non-English typed questions ----

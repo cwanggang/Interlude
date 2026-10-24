@@ -88,7 +88,28 @@ export async function mintAccessToken(): Promise<{ token: string; expiresAt: num
   return { token: "stub-token", expiresAt: Date.now() + 60_000 };
 }
 
-/** Batch transcription of a recorded visit file. */
-export async function transcribeFile(_audio: Blob): Promise<{ text: string }> {
-  return { text: "" };
+/**
+ * Batch transcription of a recorded visit file (POST /stt, ink-whisper). Ink takes one
+ * language per request, so a mixed-language visit is transcribed once per language and
+ * Claude merges the passes.
+ */
+export async function transcribeFile(audio: Blob, language: Language): Promise<{ text: string }> {
+  const { "Content-Type": _json, ...auth } = headers();
+  const form = new FormData();
+  form.append("file", audio, `visit.${extensionFor(audio.type)}`);
+  form.append("model", "ink-whisper");
+  form.append("language", language);
+  const res = await fetch(`${API}/stt`, { method: "POST", headers: auth, body: form });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Cartesia POST /stt (${language}) -> ${res.status}: ${text}`);
+  return { text: (JSON.parse(text) as { text: string }).text };
+}
+
+function extensionFor(mime: string): string {
+  if (mime.includes("wav")) return "wav";
+  if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
+  if (mime.includes("webm")) return "webm";
+  if (mime.includes("ogg")) return "ogg";
+  if (mime.includes("flac")) return "flac";
+  return "m4a";
 }
