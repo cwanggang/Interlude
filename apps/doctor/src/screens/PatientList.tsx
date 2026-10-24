@@ -12,14 +12,12 @@ import { useNow } from '../useNow'
 
 type Filter = 'all' | 'alerts' | 'today' | 'spanish'
 
-const COLUMNS = [
-  { label: 'NAME', width: undefined },
-  { label: 'NEXT APPOINTMENT', width: 240 },
-  { label: 'REASON', width: 280 },
-  { label: 'LANGUAGE', width: 150 },
-  { label: 'ALERT', width: 180 },
-  { label: 'NEW', width: 60 },
-]
+const COLUMNS = ['NAME', 'NEXT APPOINTMENT', 'REASON', 'LANGUAGE', 'ALERT', 'NEW']
+// Columns share the width and shrink together; below TABLE_MIN the table scrolls sideways
+// inside its card instead of squeezing text on top of each other.
+const GRID = 'minmax(190px, 1.3fr) minmax(140px, 1fr) minmax(170px, 1.6fr) 120px minmax(130px, 1fr) 44px'
+const TABLE_MIN = 900
+const cell = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const
 
 function appointmentLabel(ms: number, now: number): string {
   const days = daysFrom(ms, now)
@@ -72,47 +70,49 @@ export default function PatientList({ onSelect }: { onSelect: (patientId: Id<'pa
         })}
       </div>
 
-      <div style={{ background: theme.color.surface, border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.md, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', padding: '16px 24px', background: theme.color.bg }}>
-          {COLUMNS.map((c) => (
-            <Text key={c.label} variant="label" style={{ flex: c.width ? `0 0 ${c.width}px` : 1, minWidth: 0 }}>{c.label}</Text>
-          ))}
+      <div style={{ background: theme.color.surface, border: `1px solid ${theme.color.border}`, borderRadius: theme.radius.md, overflowX: 'auto' }}>
+        <div style={{ minWidth: TABLE_MIN }}>
+          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: 16, alignItems: 'center', padding: '16px 24px', background: theme.color.bg }}>
+            {COLUMNS.map((label) => (
+              <Text key={label} variant="label" style={cell}>{label}</Text>
+            ))}
+          </div>
+          {rows === undefined && <Text variant="muted" style={{ padding: 24 }}>Loading…</Text>}
+          {rows !== undefined && shown.length === 0 && <Text variant="muted" style={{ padding: 24 }}>{all.length === 0 ? 'No patients yet. Run `npm run seed`.' : 'No patients match.'}</Text>}
+          {shown.map(({ patient, nextAppointment, openAlerts, lastCheckinAt, latestAlertSymptom }, i) => {
+            const isNew = lastCheckinAt !== null && lastCheckinAt > (patient.doctorLastViewedAt ?? 0)
+            return (
+              <div key={patient._id}>
+                {i > 0 && <div style={{ height: 1, background: theme.color.border }} />}
+                <button
+                  onClick={() => onSelect(patient._id)}
+                  style={{ display: 'grid', gridTemplateColumns: GRID, gap: 16, alignItems: 'center', width: '100%', padding: '16px 24px', border: 'none', background: openAlerts > 0 ? theme.color.dangerBg : 'transparent', cursor: 'pointer', textAlign: 'left' }}
+                >
+                  <span style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Avatar name={patient.name} />
+                    <Text variant="strong" style={cell}>{patient.name}</Text>
+                  </span>
+                  <Text style={{ ...cell, font: `400 15px/1.45 ${theme.font.body}` }}>{nextAppointment ? appointmentLabel(nextAppointment.scheduledAt, now) : '—'}</Text>
+                  <Text style={{ ...cell, font: `400 15px/1.45 ${theme.font.body}` }}>{patient.reasonForVisit}</Text>
+                  <span style={{ minWidth: 0 }}>
+                    <Chip tone={patient.language === 'es' ? 'periwinkle' : 'neutral'} icon={patient.language === 'es' ? 'globe-periwinkle' : 'globe-muted-14'} size={12}>{patient.language === 'es' ? 'Spanish' : 'English'}</Chip>
+                  </span>
+                  <span style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {openAlerts > 0 ? (
+                      <>
+                        <CountBadge count={openAlerts} />
+                        <Text style={{ ...cell, font: `600 13px/1.45 ${theme.font.body}` }} color={theme.color.dangerText}>{latestAlertSymptom ? latestAlertSymptom[0].toUpperCase() + latestAlertSymptom.slice(1) : ''}</Text>
+                      </>
+                    ) : (
+                      <Text color={theme.color.placeholder} style={{ font: `400 15px ${theme.font.body}` }}>—</Text>
+                    )}
+                  </span>
+                  <span>{isNew && <Dot title="New check-in since you last viewed" />}</span>
+                </button>
+              </div>
+            )
+          })}
         </div>
-        {rows === undefined && <Text variant="muted" style={{ padding: 24 }}>Loading…</Text>}
-        {rows !== undefined && shown.length === 0 && <Text variant="muted" style={{ padding: 24 }}>{all.length === 0 ? 'No patients yet. Run `npm run seed`.' : 'No patients match.'}</Text>}
-        {shown.map(({ patient, nextAppointment, openAlerts, lastCheckinAt, latestAlertSymptom }, i) => {
-          const isNew = lastCheckinAt !== null && lastCheckinAt > (patient.doctorLastViewedAt ?? 0)
-          return (
-            <div key={patient._id}>
-              {i > 0 && <div style={{ height: 1, background: theme.color.border }} />}
-              <button
-                onClick={() => onSelect(patient._id)}
-                style={{ display: 'flex', gap: 16, alignItems: 'center', width: '100%', padding: '16px 24px', border: 'none', background: openAlerts > 0 ? theme.color.dangerBg : 'transparent', cursor: 'pointer', textAlign: 'left' }}
-              >
-                <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Avatar name={patient.name} />
-                  <Text variant="strong">{patient.name}</Text>
-                </span>
-                <Text style={{ flex: '0 0 240px', font: `400 15px/1.45 ${theme.font.body}` }}>{nextAppointment ? appointmentLabel(nextAppointment.scheduledAt, now) : '—'}</Text>
-                <Text style={{ flex: '0 0 280px', font: `400 15px/1.45 ${theme.font.body}`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{patient.reasonForVisit}</Text>
-                <span style={{ flex: '0 0 150px' }}>
-                  <Chip tone={patient.language === 'es' ? 'periwinkle' : 'neutral'} icon={patient.language === 'es' ? 'globe-periwinkle' : 'globe-muted-14'} size={12}>{patient.language === 'es' ? 'Spanish' : 'English'}</Chip>
-                </span>
-                <span style={{ flex: '0 0 180px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                  {openAlerts > 0 ? (
-                    <>
-                      <CountBadge count={openAlerts} />
-                      <Text style={{ font: `600 13px/1.45 ${theme.font.body}` }} color={theme.color.dangerText}>{latestAlertSymptom ? latestAlertSymptom[0].toUpperCase() + latestAlertSymptom.slice(1) : ''}</Text>
-                    </>
-                  ) : (
-                    <Text color={theme.color.placeholder} style={{ font: `400 15px ${theme.font.body}` }}>—</Text>
-                  )}
-                </span>
-                <span style={{ flex: '0 0 60px' }}>{isNew && <Dot title="New check-in since you last viewed" />}</span>
-              </button>
-            </div>
-          )
-        })}
       </div>
     </Screen>
   )

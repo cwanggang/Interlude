@@ -77,10 +77,10 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
       <header style={{ position: 'sticky', top: 0, zIndex: 10, background: theme.color.surface, borderBottom: `1px solid ${theme.color.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: `22px ${theme.space.xxl}px`, flexWrap: 'wrap' }}>
           <Avatar name={patient.name} size={56} gradient />
-          <div style={{ flex: 1, minWidth: 320, display: 'grid', gap: 6 }}>
+          <div style={{ flex: '1 1 320px', minWidth: 0, display: 'grid', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
               <Text variant="title">{patient.name}</Text>
-              <Text color={theme.color.textMuted} style={{ whiteSpace: 'pre' }}>
+              <Text color={theme.color.textMuted} style={{ whiteSpace: 'pre-wrap', minWidth: 0 }}>
                 {[patient.dateOfBirth ? String(age(patient.dateOfBirth, now)) : null, patient.reasonForVisit].filter(Boolean).join('  ·  ')}
               </Text>
             </div>
@@ -90,7 +90,7 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
               {stage.kind === 'none' && conversations && <Chip tone="primary" icon="phone-teal-14">{`${doneDays.size} of ${COMPLETION_DAYS} check-ins`}</Chip>}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {appointment && <VisitButtons stage={stage} showVisit={showVisit} onToggle={() => setShowVisit(!showVisit)} onStart={() => setStarting(true)} />}
           </div>
         </div>
