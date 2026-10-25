@@ -6,15 +6,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { Redirect } from 'expo-router';
 import { useState } from 'react';
-import { Modal, Pressable, View } from 'react-native';
-import { Text as RNText } from '../../BiText';
+import { Modal, Pressable, Text as RNText, View } from 'react-native';
 
 import { api } from '../../../../../convex/_generated/api';
 import { AskButton, Button, Card, Divider, Icon, IconCircle, Screen, ScreenTitle, SectionLabel, Text, TextField, Toggle } from '../../components';
 import { icons } from '../../icons';
 import { formatTime, type Language, type Strings } from '../../i18n';
 import { theme } from '../../theme';
-import { setShowEnglish, useShowEnglish } from '../../showEnglish';
 import { usePatient } from '../../usePatient';
 
 const PHONE = /^\+1\d{10}$/;
@@ -36,7 +34,6 @@ function callTimeLabel(hhmm: string, language: Language): string {
 
 export default function Settings() {
   const { patient, appointment, language, s } = usePatient();
-  const showEnglish = useShowEnglish();
   const update = useMutation(api.patients.update);
   const [confirmStop, setConfirmStop] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -109,19 +106,6 @@ export default function Settings() {
         <Divider />
         <ToggleRow label={s.summaryReadyNotif} value={patient.notificationsEnabled ?? true} onChange={(on) => save({ notificationsEnabled: on })} />
       </Card>
-
-      {/* Demo only: shown for Spanish, where English text helps people who don't read Spanish. */}
-      {language === 'es' && (
-        <>
-          <SectionLabel icon="info-16" label={s.demoSection} />
-          <Card gap={0}>
-            <ToggleRow label={s.showEnglish} value={showEnglish} onChange={setShowEnglish} />
-            <View style={{ paddingBottom: 14 }}>
-              <RNText style={{ fontFamily: theme.font.body, fontSize: 14, lineHeight: 14 * 1.4, color: theme.color.textMuted }}>{s.showEnglishHint}</RNText>
-            </View>
-          </Card>
-        </>
-      )}
 
       {appointment && (
         <>

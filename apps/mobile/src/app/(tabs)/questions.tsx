@@ -8,7 +8,6 @@ import type { Doc, Id } from '../../../../../convex/_generated/dataModel';
 import { Badge, Button, Card, PageHeader, Screen, ScreenTitle, Text, TextField } from '../../components';
 import type { Strings } from '../../i18n';
 import { theme } from '../../theme';
-import { bi } from '../../showEnglish';
 import { usePatient } from '../../usePatient';
 
 export default function Questions() {
@@ -89,7 +88,7 @@ function QuestionRow({
       {editing ? (
         <TextField value={text} onChangeText={setText} multiline />
       ) : (
-        <Text>{bi(question.textOriginal, question.textEnglish, 'es')}</Text>
+        <Text>{question.textOriginal}</Text>
       )}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm }}>
         <Badge tone={question.source === 'voice' ? 'primary' : 'neutral'} label={question.source === 'voice' ? s.sourceVoice : s.sourceTyped} />

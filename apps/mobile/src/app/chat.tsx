@@ -8,15 +8,14 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Animated, KeyboardAvoidingView, Platform, Pressable, ScrollView, TextInput, View } from 'react-native';
-import { Text as RNText } from '../BiText';
+import { Animated, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text as RNText, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '../../../../convex/_generated/api';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { Icon, ScreenTitle, StatusChip, Text } from '../components';
 import { icons } from '../icons';
-import { plain, type Strings } from '../i18n';
+import type { Strings } from '../i18n';
 import { theme } from '../theme';
 import { useClipRecorder } from '../useClipRecorder';
 import { usePatient } from '../usePatient';
@@ -133,7 +132,7 @@ export default function Chat() {
                 <TextInput
                   value={draft}
                   onChangeText={setDraft}
-                  placeholder={plain(s.typeHere)}
+                  placeholder={s.typeHere}
                   placeholderTextColor="#9ab0ba"
                   accessibilityLabel={s.chatPlaceholder}
                   onSubmitEditing={() => void sendText(draft)}
@@ -184,7 +183,7 @@ function EmptyState({ s, disabled, onPick }: { s: Strings; disabled: boolean; on
           key={suggestion}
           accessibilityRole="button"
           disabled={disabled}
-          onPress={() => onPick(plain(suggestion))}
+          onPress={() => onPick(suggestion)}
           style={{ height: 60, borderRadius: 20, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surface, flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 16, gap: theme.space.sm, opacity: disabled ? 0.6 : 1 }}
         >
           <View style={{ flex: 1 }}>

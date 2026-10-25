@@ -4,9 +4,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useNavigation } from 'expo-router';
 import { useLayoutEffect, type ReactNode } from 'react';
-import { Pressable, ScrollView, TextInput, View, type TextStyle, type ViewStyle } from 'react-native';
-import { Text as RNText } from '../BiText';
-import { plain } from '../i18n';
+import { Pressable, ScrollView, Text as RNText, TextInput, View, type TextStyle, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { icons, type IconName } from '../icons';
@@ -370,11 +368,11 @@ export function TextField({
       <TextInput
         value={value}
         onChangeText={onChangeText}
-        placeholder={placeholder && plain(placeholder)}
+        placeholder={placeholder}
         placeholderTextColor={theme.color.textMuted}
         keyboardType={keyboardType}
         multiline={multiline}
-        accessibilityLabel={plain(label ?? placeholder ?? '')}
+        accessibilityLabel={label ?? placeholder}
         style={{
           minHeight: 56,
           fontFamily: theme.font.body,

@@ -276,9 +276,6 @@ const strings = {
     automatedCallsHint: "If you turn them off, we'll stop calling you every day. We'll ask you to confirm first.",
     callReminders: 'Call reminders',
     summaryReadyNotif: 'Your summary is ready',
-    demoSection: 'Demo',
-    showEnglish: 'Show English under Spanish',
-    showEnglishHint: 'For demos: small English text under each Spanish line.',
     doctorLabel: 'Doctor',
     dateLabel: 'Date',
     clinicLabel: 'Clinic',
@@ -558,9 +555,6 @@ const strings = {
     automatedCallsHint: 'Si las apaga, dejaremos de llamarle cada día. Le pediremos que lo confirme primero.',
     callReminders: 'Recordatorios de llamada',
     summaryReadyNotif: 'Su resumen está listo',
-    demoSection: 'Demostración',
-    showEnglish: 'Mostrar inglés debajo del español',
-    showEnglishHint: 'Para demostraciones: texto pequeño en inglés debajo de cada línea en español.',
     doctorLabel: 'Doctor',
     dateLabel: 'Fecha',
     clinicLabel: 'Clínica',
@@ -587,45 +581,6 @@ export type Strings = (typeof strings)['en'];
 
 export function t(language: Language | undefined): Strings {
   return strings[language ?? 'es'];
-}
-
-// "Show English" (demo): each Spanish string carries its English as START es SEP en END, using
-// invisible format characters, so it survives template strings. BiText draws the English under
-// the Spanish; plain() strips it for places that can't show two lines (placeholders, messages).
-const START = '⁢';
-const SEP = '⁣';
-const END = '⁤';
-const MARKED = new RegExp(`${START}([^${SEP}]*)${SEP}([^${END}]*)${END}`, 'g');
-
-function pair(es: unknown, en: unknown): unknown {
-  if (typeof es === 'string') return typeof en === 'string' && en !== es ? `${START}${es}${SEP}${en}${END}` : es;
-  if (typeof es === 'function') return (...args: unknown[]) => pair((es as (...a: unknown[]) => unknown)(...args), typeof en === 'function' ? (en as (...a: unknown[]) => unknown)(...args) : undefined);
-  if (Array.isArray(es)) return es.map((item, i) => pair(item, Array.isArray(en) ? en[i] : undefined));
-  if (es && typeof es === 'object') return Object.fromEntries(Object.entries(es).map(([k, v]) => [k, pair(v, (en as Record<string, unknown> | undefined)?.[k])]));
-  return es;
-}
-
-const bilingualStrings = pair(strings.es, strings.en) as Strings;
-
-/** The patient's strings; Spanish with English attached when "Show English" is on. */
-export function stringsFor(language: Language | undefined, showEnglish: boolean): Strings {
-  return showEnglish && (language ?? 'es') === 'es' ? bilingualStrings : t(language);
-}
-
-/** Splits a marked string into what to show and the English beneath (null when unmarked). */
-export function splitBilingual(text: string): { main: string; english: string | null } {
-  if (!text.includes(SEP)) return { main: text, english: null };
-  return { main: text.replace(MARKED, '$1'), english: text.replace(MARKED, '$2') };
-}
-
-/** The visible text only, for placeholders, accessibility labels and messages sent on. */
-export function plain(text: string): string {
-  return splitBilingual(text).main;
-}
-
-/** Spanish data with its stored English, shown the same way as the labels (e.g. a quote). */
-export function withEnglish(main: string, english: string | null | undefined, showEnglish: boolean): string {
-  return showEnglish && english && english !== main ? `${START}${main}${SEP}${english}${END}` : main;
 }
 
 export function formatDate(ms: number, language: Language, withTime = false): string {
