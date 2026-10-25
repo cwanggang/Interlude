@@ -8,7 +8,7 @@ Every session starts with "I am Track A" or "I am Track B". Only edit files your
 | --- | --- |
 | A: Voice + AI pipeline | `convex/cartesia.ts`, `convex/calls.ts`, `convex/crons.ts`, `convex/pipeline.ts`, `convex/http.ts`, `convex/visits.ts`, `convex/claude.ts`, `convex/chat.ts`, `convex/lib/time.ts`, `apps/mobile/src/voice/*`, Cartesia agent configs |
 | B: Data + apps | `convex/elastic.ts`, `convex/briefs.ts`, `/elastic/*`, `convex/patients.ts`, `convex/questions.ts`, `convex/alerts.ts`, `convex/appointments.ts`, `convex/medications.ts`, `convex/tasks.ts`, `convex/dashboard.ts`, `convex/health.ts`, `convex/notifications.ts`, `apps/doctor/*`, `apps/mobile/*` (except `src/voice`), both `theme.ts` files |
-| Shared (Dev A approves) | `convex/schema.ts`, `convex/seed.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `ELASTIC.md`, `CLAUDE.md` |
+| Shared (Dev A approves) | `convex/schema.ts`, `convex/convex.config.ts`, `convex/seed.ts`, `scripts/seed.ts`, root `package.json`, `SPEC.md`, `ELASTIC.md`, `CLAUDE.md` |
 
 ## Cross-track functions (the contract)
 
