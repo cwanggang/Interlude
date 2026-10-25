@@ -1,14 +1,16 @@
-// TRACK A owns this file. The one post-call pipeline (SPEC.md Key decision 2):
-// poll Get Call → Claude extraction → write Convex → internal.elastic.indexCheckin → processed.
+// TRACK A owns this file. The one post-call pipeline (SPEC.md Key decision 2), run as a durable
+// workflow: poll Get Call → Claude extraction → write Convex → internal.elastic.indexCheckin → processed.
 // Also the inserts behind the red-flag and add-question webhooks.
+import { WorkflowManager, vResultValidator, vWorkflowId } from "@convex-dev/workflow";
 import { v } from "convex/values";
 import {
   internalAction,
   internalMutation,
   internalQuery,
+  type ActionCtx,
   type MutationCtx,
 } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { getCall } from "./cartesia";
 import { extractCheckin, type CheckinExtraction } from "./claude";
@@ -28,16 +30,121 @@ const conversationStatus = v.union(
 
 const transcriptValidator = v.array(v.object({ role: v.string(), text: v.string() }));
 
-/** Polls Cartesia every 15 s until the call ends, then schedules processConversation. */
-export const pollCall = internalAction({
-  args: { conversationId: v.id("conversations"), attempt: v.number() },
+export const workflow = new WorkflowManager(components.workflow);
+
+/** Claude: 4 tries, waiting 2 s, 4 s, then 8 s. */
+const CLAUDE_RETRY = { maxAttempts: 4, initialBackoffMs: 2_000, base: 2 };
+/** Elastic: 5 tries, waiting 1 s, 2 s, 4 s, then 8 s. */
+const ELASTIC_RETRY = { maxAttempts: 5, initialBackoffMs: 1_000, base: 2 };
+
+/**
+ * Starts the post-call workflow. Phone calls pass `poll: true` (wait for Cartesia to end the
+ * call first); chat and the dev tool save the transcript themselves and pass `false`.
+ */
+export async function startAfterCall(
+  ctx: MutationCtx | ActionCtx,
+  conversationId: Id<"conversations">,
+  poll: boolean,
+): Promise<void> {
+  await workflow.start(
+    ctx,
+    internal.pipeline.afterCall,
+    { conversationId, poll },
+    { onComplete: internal.pipeline.afterCallDone, context: conversationId },
+  );
+}
+
+/**
+ * The post-call pipeline as a durable workflow (@convex-dev/workflow): wait for the call to
+ * end → Claude extraction → saveExtraction → index in Elastic → processed. Each finished step
+ * is journaled, so a deploy or crash resumes at the step it was on (Claude is not asked
+ * twice), and Claude and Elastic failures retry with backoff instead of losing the check-in.
+ */
+export const afterCall = workflow.define({
+  args: { conversationId: v.id("conversations"), poll: v.boolean() },
+  handler: async (step, { conversationId, poll }): Promise<void> => {
+    if (poll) {
+      let call: CallCheck = "waiting";
+      for (let attempt = 0; attempt < MAX_POLLS && call === "waiting"; attempt++) {
+        call = await step.runAction(
+          internal.pipeline.checkCall,
+          { conversationId, attempt },
+          { runAfter: POLL_MS },
+        );
+      }
+      if (call !== "ended") return;
+    }
+
+    const next = await step.runMutation(internal.pipeline.beginProcessing, { conversationId });
+    if (next !== "extract") return;
+
+    let extraction: CheckinExtraction;
+    try {
+      extraction = await step.runAction(
+        internal.pipeline.extract,
+        { conversationId },
+        { retry: CLAUDE_RETRY },
+      );
+    } catch (error) {
+      console.error(`[pipeline] Claude extraction failed for ${conversationId}:`, error);
+      // "error", not a missed call: the patient did talk (callSchedule shows the call as done).
+      await step.runMutation(internal.pipeline.setStatus, {
+        conversationId,
+        status: "failed",
+        endReason: "error",
+      });
+      return;
+    }
+
+    const entryIds = await step.runMutation(internal.pipeline.saveExtraction, {
+      conversationId,
+      extraction,
+    });
+
+    // Index before marking processed: the dashboard refetches the timeline on that change.
+    try {
+      await step.runAction(
+        internal.pipeline.indexEntries,
+        { conversationId, entryIds },
+        { retry: ELASTIC_RETRY },
+      );
+    } catch (error) {
+      // Convex stays the source of truth; elastic.reindexAll can repair the index later.
+      console.error(`[pipeline] Elastic indexing failed for ${conversationId}:`, error);
+    }
+
+    await step.runMutation(internal.pipeline.setStatus, { conversationId, status: "processed" });
+    console.log(`[pipeline] ${conversationId} processed`);
+  },
+});
+
+/** A workflow that threw or was canceled must not leave the conversation stuck mid-pipeline. */
+export const afterCallDone = internalMutation({
+  args: { workflowId: vWorkflowId, result: vResultValidator, context: v.id("conversations") },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (args.result.kind === "success") return null;
+    console.error(`[pipeline] workflow ${args.workflowId} ${args.result.kind}:`, args.result);
+    const conversation = await ctx.db.get("conversations", args.context);
+    if (conversation && conversation.status !== "processed" && conversation.status !== "failed") {
+      await ctx.db.patch("conversations", conversation._id, { status: "failed", endReason: "error" });
+    }
+    return null;
+  },
+});
+
+type CallCheck = "waiting" | "ended" | "failed";
+
+/** One Get Call poll. Saves the transcript when the call has ended; fails it on the last try. */
+export const checkCall = internalAction({
+  args: { conversationId: v.id("conversations"), attempt: v.number() },
+  returns: v.union(v.literal("waiting"), v.literal("ended"), v.literal("failed")),
+  handler: async (ctx, args): Promise<CallCheck> => {
     const conversation = await ctx.runQuery(internal.pipeline.getConversation, {
       conversationId: args.conversationId,
     });
-    if (!conversation?.cartesiaCallId) return null;
-    if (conversation.status !== "dialing" && conversation.status !== "in_progress") return null;
+    if (!conversation?.cartesiaCallId) return "failed";
+    if (conversation.status !== "dialing" && conversation.status !== "in_progress") return "failed";
 
     let call;
     try {
@@ -56,10 +163,7 @@ export const pollCall = internalAction({
         transcript: call.transcript,
         endReason: call.endReason ?? undefined,
       });
-      await ctx.scheduler.runAfter(0, internal.pipeline.processConversation, {
-        conversationId: args.conversationId,
-      });
-      return null;
+      return "ended";
     }
     if (call?.status === "failed" || args.attempt + 1 >= MAX_POLLS) {
       console.warn(`[pipeline] call ${args.conversationId} failed: ${call?.endReason ?? "timeout"}`);
@@ -68,7 +172,7 @@ export const pollCall = internalAction({
         status: "failed",
         endReason: call?.endReason ?? (call ? "failed" : "timeout"),
       });
-      return null;
+      return "failed";
     }
     if (call?.status === "in_progress" && conversation.status === "dialing") {
       await ctx.runMutation(internal.pipeline.setStatus, {
@@ -76,98 +180,112 @@ export const pollCall = internalAction({
         status: "in_progress",
       });
     }
-    await ctx.scheduler.runAfter(POLL_MS, internal.pipeline.pollCall, {
-      conversationId: args.conversationId,
-      attempt: args.attempt + 1,
-    });
-    return null;
+    return "waiting";
   },
 });
 
-/** Transcript → Claude extraction → saveExtraction → index each entry in Elastic → processed. */
-export const processConversation = internalAction({
+/**
+ * Decides whether an ended conversation needs extraction. Marks missed calls (no patient
+ * turns) failed and explainer calls processed, since neither has anything to extract.
+ */
+export const beginProcessing = internalMutation({
   args: { conversationId: v.id("conversations") },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const conversation = await ctx.runQuery(internal.pipeline.getConversation, args);
-    if (!conversation || conversation.status !== "ended") return null;
+  returns: v.union(v.literal("extract"), v.literal("done")),
+  handler: async (ctx, args): Promise<"extract" | "done"> => {
+    const conversation = await ctx.db.get("conversations", args.conversationId);
+    if (!conversation || conversation.status !== "ended") return "done";
     const transcript = conversation.transcript ?? [];
-
     // No patient turns (no answer, voicemail, busy): a missed call, so the Home tile can say so.
     if (!transcript.some((t) => t.role === "user")) {
       const endReason = conversation.endReason ?? "no_answer";
       console.log(`[pipeline] ${args.conversationId}: no patient turns (${endReason}); missed`);
-      await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "failed", endReason });
-      return null;
+      await ctx.db.patch("conversations", conversation._id, { status: "failed", endReason });
+      return "done";
     }
     // An explainer call has nothing to extract.
     if (conversation.mode !== "checkin") {
-      await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "processed" });
-      return null;
+      await ctx.db.patch("conversations", conversation._id, { status: "processed" });
+      return "done";
     }
+    return "extract";
+  },
+});
 
+/** Claude extraction step. It writes nothing, so the workflow can retry it safely. */
+export const extract = internalAction({
+  args: { conversationId: v.id("conversations") },
+  returns: v.any(), // CheckinExtraction from claude.ts
+  handler: async (ctx, args): Promise<CheckinExtraction> => {
+    const conversation = await ctx.runQuery(internal.pipeline.getConversation, args);
+    if (!conversation) throw new Error("Conversation not found");
     const started = Date.now();
-    let extraction: CheckinExtraction;
-    try {
-      extraction = await extractCheckin(
-        transcript,
-        conversation.language,
-        conversation.activeSymptoms,
-      );
-    } catch (error) {
-      console.error(`[pipeline] Claude extraction failed for ${args.conversationId}:`, error);
-      // "error", not a missed call: the patient did talk (callSchedule shows the call as done).
-      await ctx.runMutation(internal.pipeline.setStatus, {
-        ...args,
-        status: "failed",
-        endReason: "error",
-      });
-      return null;
-    }
+    const extraction = await extractCheckin(
+      conversation.transcript ?? [],
+      conversation.language,
+      conversation.activeSymptoms,
+    );
     console.log(
       `[pipeline] Claude extracted ${extraction.symptoms.length} symptoms, ` +
         `${extraction.medications.length} medications, ` +
         `${extraction.questions_for_doctor.length} questions in ${Date.now() - started} ms`,
     );
+    return extraction;
+  },
+});
 
-    const entryIds = await ctx.runMutation(internal.pipeline.saveExtraction, {
+/** Elastic step. indexCheckin uses the entry ID as the document ID, so a retry is idempotent. */
+export const indexEntries = internalAction({
+  args: { conversationId: v.id("conversations"), entryIds: v.array(v.id("symptomEntries")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.runQuery(internal.pipeline.getConversation, {
       conversationId: args.conversationId,
-      extraction,
     });
-
-    // Index before marking processed: the dashboard refetches the timeline on that change.
-    const entries = await ctx.runQuery(internal.pipeline.getEntries, { entryIds });
+    if (!conversation) throw new Error("Conversation not found");
+    const entries = await ctx.runQuery(internal.pipeline.getEntries, { entryIds: args.entryIds });
     for (const entry of entries) {
-      try {
-        await ctx.runAction(internal.elastic.indexCheckin, {
-          symptomEntryId: entry._id,
-          patientId: entry.patientId,
-          appointmentId: entry.appointmentId,
-          conversationId: entry.conversationId,
-          date: entry.date,
-          symptom: entry.symptom,
-          severity: entry.severity,
-          change: entry.change,
-          language: conversation.language,
-          quoteOriginal: entry.quoteOriginal,
-          quoteEnglish: entry.quoteEnglish,
-        });
-      } catch (error) {
-        // Convex stays the source of truth; elastic.reindexAll can repair the index later.
-        console.error(`[pipeline] indexCheckin failed for ${entry._id}:`, error);
-      }
+      await ctx.runAction(internal.elastic.indexCheckin, {
+        symptomEntryId: entry._id,
+        patientId: entry.patientId,
+        appointmentId: entry.appointmentId,
+        conversationId: entry.conversationId,
+        date: entry.date,
+        symptom: entry.symptom,
+        severity: entry.severity,
+        change: entry.change,
+        language: conversation.language,
+        quoteOriginal: entry.quoteOriginal,
+        quoteEnglish: entry.quoteEnglish,
+      });
     }
     console.log(`[pipeline] indexed ${entries.length} entries in Elastic`);
+    return null;
+  },
+});
 
-    await ctx.runMutation(internal.pipeline.setStatus, { ...args, status: "processed" });
-    console.log(`[pipeline] ${args.conversationId} processed`);
+// Pre-workflow entry points, kept so jobs scheduled before this deploy still finish.
+// Remove once no pollCall or processConversation jobs are pending.
+export const pollCall = internalAction({
+  args: { conversationId: v.id("conversations"), attempt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await startAfterCall(ctx, args.conversationId, true);
+    return null;
+  },
+});
+
+export const processConversation = internalAction({
+  args: { conversationId: v.id("conversations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await startAfterCall(ctx, args.conversationId, false);
     return null;
   },
 });
 
 /**
  * Writes symptomEntries, medicationEvents, questions and the summary. Does not mark the
- * conversation processed; processConversation does that after indexing in Elastic.
+ * conversation processed; the afterCall workflow does that after indexing in Elastic.
  */
 export const saveExtraction = internalMutation({
   args: {
@@ -382,7 +500,7 @@ export const devProcessTranscript = internalMutation({
       endReason: args.endReason,
       startedAt: Date.now(),
     });
-    await ctx.scheduler.runAfter(0, internal.pipeline.processConversation, { conversationId });
+    await startAfterCall(ctx, conversationId, false);
     return conversationId;
   },
 });

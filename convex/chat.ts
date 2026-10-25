@@ -17,6 +17,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { agentVariables, currentAppointment, defaultMode } from "./calls";
 import { transcribeFile } from "./cartesia";
 import { chatReply, type ChatPassage } from "./claude";
+import { startAfterCall } from "./pipeline";
 
 /** A session with no new message for this long is ended and processed. */
 const IDLE_MS = 10 * 60_000;
@@ -177,9 +178,7 @@ async function endSession(ctx: MutationCtx, conversation: Doc<"conversations">) 
     return;
   }
   await ctx.db.patch("conversations", conversation._id, { transcript, status: "ended" });
-  await ctx.scheduler.runAfter(0, internal.pipeline.processConversation, {
-    conversationId: conversation._id,
-  });
+  await startAfterCall(ctx, conversation._id, false);
 }
 
 /** Scheduled IDLE_MS after each message; ends the session only if nothing came since. */
