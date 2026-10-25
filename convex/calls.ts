@@ -16,6 +16,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { agentIdFor, startOutboundCall, type Language } from "./cartesia";
 import { DAY_MS, localDate, nextDate, zonedTimeToMs } from "./lib/time";
+import { startAfterCall } from "./pipeline";
 
 const conversationStatus = v.union(
   v.literal("dialing"),
@@ -387,7 +388,7 @@ export async function agentVariables(
   return vars;
 }
 
-/** Builds dynamic variables, sends POST /agents/calls, stores the call ID, starts polling. */
+/** Builds dynamic variables, sends POST /agents/calls, stores the call ID, starts the afterCall workflow. */
 export const startCall = internalAction({
   args: { conversationId: v.id("conversations") },
   returns: v.null(),
@@ -411,10 +412,7 @@ export const startCall = internalAction({
         cartesiaCallId: callId,
       });
       console.log(`[calls] dialing ${context.toPhone}, Cartesia call ${callId}`);
-      await ctx.scheduler.runAfter(POLL_MS, internal.pipeline.pollCall, {
-        conversationId: args.conversationId,
-        attempt: 0,
-      });
+      await startAfterCall(ctx, args.conversationId, true);
     } catch (error) {
       console.error(`[calls] failed to start ${args.conversationId}:`, error);
       await ctx.runMutation(internal.pipeline.setStatus, {
