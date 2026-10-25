@@ -15,7 +15,7 @@ import StartVisitFlow from './patient/LiveVisit'
 import VisitView from './patient/VisitView'
 import { visitStage } from './patient/visitStage'
 import { dayPanel, type QuotePanel } from './patient/quotes'
-import { AlertBanner, AskRecord, Brief, HistoryCards, Questions, QuotesColumn, Search } from './patient/sections'
+import { AlertBanner, AskRecord, Brief, HistoryCards, Questions, QuotesColumn } from './patient/sections'
 
 const COMPLETION_DAYS = 7
 const DAY_MS = 86_400_000
@@ -121,6 +121,7 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
             setShowVisit(false)
             if (date) selectDay({ symptom, date })
           }}
+          onDeleted={() => setShowVisit(false)}
         />
       ) : (
         <Screen>
@@ -130,7 +131,6 @@ export default function PatientView({ patientId, onBack }: { patientId: Id<'pati
               <Timeline patientId={patientId} selected={selected} onSelect={selectDay} />
               <HistoryCards entries={entries ?? []} />
               {appointment && <Questions appointmentId={appointment._id} />}
-              <Search patientId={patientId} />
             </div>
             {/* Right column stays in view while the left scrolls; it scrolls itself if taller than the window. */}
             <div style={{ flex: '0 0 400px', maxWidth: '100%', position: 'sticky', top: 120, maxHeight: 'calc(100vh - 140px)', overflowY: 'auto', display: 'grid', gap: 24, alignContent: 'start' }}>

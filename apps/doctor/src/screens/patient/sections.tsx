@@ -6,7 +6,7 @@ import { useAction, useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { api } from '../../../../../convex/_generated/api'
 import type { Id } from '../../../../../convex/_generated/dataModel'
-import { Blend, Button, Card, Chip, CloseButton, Divider, Icon, SearchField, Text, TextField } from '../../components'
+import { Blend, Button, Card, Chip, CloseButton, Divider, Icon, Text, TextField } from '../../components'
 import { formatDateTime, formatDay, isoDay } from '../../format'
 import { theme } from '../../theme'
 import type { QuotePanel } from './quotes'
@@ -254,78 +254,95 @@ export function Questions({ appointmentId }: { appointmentId: Id<'appointments'>
 }
 
 /** C6: cross-language search over this patient's check-in quotes (hybrid + rerank in Elastic). */
-export function Search({ patientId }: { patientId: Id<'patients'> }) {
-  const search = useAction(api.elastic.searchCheckins)
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<FunctionReturnType<typeof api.elastic.searchCheckins> | null>(null)
-  const [busy, setBusy] = useState(false)
-  const onSearch = async () => {
-    if (!query.trim()) return
-    setBusy(true)
-    try {
-      setResults(await search({ patientId, query: query.trim() }))
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Card padding={24} gap={12}>
-      <Text variant="heading">Search this patient</Text>
-      <SearchField value={query} onChange={setQuery} onSubmit={() => void onSearch()} placeholder='Try "dizziness" — finds "mareada" too' active={!!query} icon="search-teal" />
-      {busy && <Text variant="muted">Searching…</Text>}
-      {results?.length === 0 && <Text variant="muted">No matches.</Text>}
-      {results?.map((r) => (
-        <div key={r.symptomEntryId} style={{ background: theme.color.bg, borderRadius: 14, padding: '12px 16px', display: 'grid', gap: 4 }}>
-          <Text variant="quote">{`“${r.quoteOriginal}”`}</Text>
-          {r.quoteEnglish !== r.quoteOriginal && <Text variant="muted">{r.quoteEnglish}</Text>}
-          <Text color={theme.color.placeholder} style={{ font: `400 12px/1.45 ${theme.font.body}` }}>{`${formatDay(r.date)} · daily call · ${r.symptom}`}</Text>
-        </div>
-      ))}
-    </Card>
-  )
+/** Lowercase without accents, so "mareada" matches "Mareada" and "presion" matches "presión". */
+function fold(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
 }
 
-/** C7: ask-the-record via Elastic Agent Builder, with cited quotes and "how this was found". Not in the design yet. */
+/**
+ * C6 + C7 in one box: Ask the record (Elastic Agent Builder writes an answer with cited quotes and
+ * "how this was found") and the patient's matching quotes (Elastic hybrid search: meaning across
+ * languages plus exact words). Each quote is tagged "Exact match" when it contains the words typed.
+ */
 export function AskRecord({ patientId }: { patientId: Id<'patients'> }) {
   const ask = useAction(api.elastic.askRecord)
+  const search = useAction(api.elastic.searchCheckins)
   const [question, setQuestion] = useState('')
-  const [result, setResult] = useState<FunctionReturnType<typeof api.elastic.askRecord> | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const onAsk = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      setResult(await ask({ patientId, question: question.trim() }))
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
+  const [asked, setAsked] = useState('')
+  const [answer, setAnswer] = useState<FunctionReturnType<typeof api.elastic.askRecord> | null>(null)
+  const [quotes, setQuotes] = useState<FunctionReturnType<typeof api.elastic.searchCheckins> | null>(null)
+  const [answerError, setAnswerError] = useState<string | null>(null)
+  const [busy, setBusy] = useState({ answer: false, quotes: false })
+
+  const onAsk = () => {
+    const q = question.trim()
+    if (!q) return
+    setAsked(q)
+    setAnswer(null)
+    setQuotes(null)
+    setAnswerError(null)
+    setBusy({ answer: true, quotes: true })
+    // Both run at once; the quotes usually come back first.
+    void search({ patientId, query: q })
+      .then(setQuotes)
+      .catch(() => setQuotes([]))
+      .finally(() => setBusy((b) => ({ ...b, quotes: false })))
+    void ask({ patientId, question: q })
+      .then(setAnswer)
+      .catch((e: unknown) => setAnswerError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setBusy((b) => ({ ...b, answer: false })))
   }
+
+  const words = fold(asked).split(/\s+/).filter((w) => w.length > 2)
+  const exact = (text: string) => words.length > 0 && words.every((w) => fold(text).includes(w))
+  const sorted = quotes ? [...quotes].sort((a, b) => Number(exact(b.quoteOriginal) || exact(b.quoteEnglish)) - Number(exact(a.quoteOriginal) || exact(a.quoteEnglish))) : null
+
   return (
     <Card padding={24} gap={12}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <Text variant="heading">Ask the record</Text>
-        <Chip tone="periwinkle" size={12}>Elastic Agent Builder</Chip>
+        <Chip tone="periwinkle" size={12}>Elastic</Chip>
       </div>
-      <TextField value={question} onChange={setQuestion} onSubmit={() => void onAsk()} busy={busy} placeholder="When did the dizziness start?" submitLabel="Ask" />
-      {error && <Text variant="muted">{error}</Text>}
-      {result && (
+      <Text variant="muted">Ask a question or search a word, in English or Spanish.</Text>
+      <TextField value={question} onChange={setQuestion} onSubmit={onAsk} busy={busy.answer && busy.quotes} placeholder='e.g. "When did the dizziness start?"' submitLabel="Ask" />
+
+      {asked && (
         <>
-          <Text>{result.answer}</Text>
-          {result.citations.map((c, i) => (
-            <div key={i} style={{ background: theme.color.bg, borderRadius: 14, padding: '12px 16px', display: 'grid', gap: 4 }}>
-              <Text variant="quote">{`“${c.quote}”`}</Text>
-              {c.date && <Text color={theme.color.placeholder} style={{ font: `400 12px/1.45 ${theme.font.body}` }}>{formatDay(c.date)}</Text>}
-            </div>
-          ))}
-          {result.steps.length > 0 && (
-            <details>
-              <summary style={{ cursor: 'pointer' }}><Text variant="link" style={{ display: 'inline' }}>How this was found</Text></summary>
-              {result.steps.map((s, i) => <Text key={i} variant="muted">{s}</Text>)}
-            </details>
+          <Text variant="label">Answer</Text>
+          {busy.answer && <Text variant="muted">Elastic agent is reading the record…</Text>}
+          {answerError && <Text variant="muted">{`Could not get an answer: ${answerError}`}</Text>}
+          {answer && (
+            <>
+              <Text>{answer.answer}</Text>
+              {answer.citations.map((c, i) => (
+                <div key={i} style={{ background: theme.color.bg, borderRadius: 14, padding: '12px 16px', display: 'grid', gap: 4 }}>
+                  <Text variant="quote">{`“${c.quote}”`}</Text>
+                  {c.date && <Text color={theme.color.placeholder} style={{ font: `400 12px/1.45 ${theme.font.body}` }}>{formatDay(c.date)}</Text>}
+                </div>
+              ))}
+              {answer.steps.length > 0 && (
+                <details>
+                  <summary style={{ cursor: 'pointer' }}><Text variant="link" style={{ display: 'inline' }}>How this was found</Text></summary>
+                  {answer.steps.map((s, i) => <Text key={i} variant="muted">{s}</Text>)}
+                </details>
+              )}
+            </>
           )}
+
+          <Text variant="label" style={{ marginTop: 8 }}>{sorted ? `Matching quotes · ${sorted.length}` : 'Matching quotes'}</Text>
+          {busy.quotes && <Text variant="muted">Searching…</Text>}
+          {sorted?.length === 0 && <Text variant="muted">No quotes match.</Text>}
+          {sorted?.map((r) => {
+            const isExact = exact(r.quoteOriginal) || exact(r.quoteEnglish)
+            return (
+              <div key={r.symptomEntryId} style={{ background: theme.color.bg, borderRadius: 14, padding: '12px 16px', display: 'grid', gap: 4 }}>
+                <span><Chip tone={isExact ? 'primary' : 'periwinkle'} size={11}>{isExact ? 'Exact match' : 'Similar meaning'}</Chip></span>
+                <Text variant="quote">{`“${r.quoteOriginal}”`}</Text>
+                {r.quoteEnglish !== r.quoteOriginal && <Text variant="muted">{r.quoteEnglish}</Text>}
+                <Text color={theme.color.placeholder} style={{ font: `400 12px/1.45 ${theme.font.body}` }}>{`${formatDay(r.date)} · daily call · ${r.symptom}`}</Text>
+              </div>
+            )
+          })}
         </>
       )}
     </Card>

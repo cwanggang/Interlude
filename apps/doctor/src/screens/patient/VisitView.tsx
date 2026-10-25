@@ -40,7 +40,7 @@ const LABELS = {
   es: { language: 'Spanish', meds: 'MEDICAMENTOS', instructions: 'INDICACIONES', followUp: 'SEGUIMIENTO Y EXÁMENES', warnings: 'SEÑALES DE ALERTA', change: { new: 'Nuevo', changed: 'Cambió', stopped: 'Suspendido' } as Record<string, string> },
 }
 
-export default function VisitView({ appointmentId, scheduledAt, patientName, patientLanguage, entries, onShowSymptom }: { appointmentId: Id<'appointments'>; scheduledAt: number; patientName: string; patientLanguage: 'en' | 'es'; entries: Entry[]; onShowSymptom: (symptom: string) => void }) {
+export default function VisitView({ appointmentId, scheduledAt, patientName, patientLanguage, entries, onShowSymptom, onDeleted }: { appointmentId: Id<'appointments'>; scheduledAt: number; patientName: string; patientLanguage: 'en' | 'es'; entries: Entry[]; onShowSymptom: (symptom: string) => void; onDeleted: () => void }) {
   const visit = useQuery(api.visits.getByAppointment, { appointmentId })
   const [highlight, setHighlight] = useState<number | null>(null)
 
@@ -60,6 +60,7 @@ export default function VisitView({ appointmentId, scheduledAt, patientName, pat
   return (
     <>
       <Screen>
+        <DeleteVisit visit={visit} patientName={patientName} onDeleted={onDeleted} />
         {!summarized && <Processing visit={visit} scheduledAt={scheduledAt} />}
         {summarized && (
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
@@ -87,6 +88,49 @@ export default function VisitView({ appointmentId, scheduledAt, patientName, pat
         </div>
       </Screen>
       {summarized && <ReleaseBar visit={visit} appointmentId={appointmentId} patientName={patientName} patientLanguage={patientLanguage} />}
+    </>
+  )
+}
+
+/**
+ * "Delete visit" (not in the design; for testing and re-recording). Removes the recording,
+ * transcript and summary; the patient's questions reopen and the visit can be recorded again.
+ */
+function DeleteVisit({ visit, patientName, onDeleted }: { visit: Visit; patientName: string; onDeleted: () => void }) {
+  const remove = useMutation(api.visits.remove)
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const first = patientName.split(' ')[0]
+  const onDelete = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await remove({ visitId: visit._id })
+      onDeleted()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button variant="secondary" style={{ color: theme.color.dangerText }} onClick={() => setConfirming(true)}>Delete visit</Button>
+      </div>
+      {confirming && (
+        <Modal onClose={() => !busy && setConfirming(false)}>
+          <Text style={{ font: `600 26px/1.15 ${theme.font.heading}` }}>Delete this visit?</Text>
+          <Text color={theme.color.textMuted}>
+            {`The recording, transcript and summary are deleted for good, and the patient's questions go back to open so the visit can be recorded again.${visit.releasedToPatient ? ` ${first} will no longer see this summary in the app.` : ''}`}
+          </Text>
+          {error && <Text color={theme.color.dangerText}>{error}</Text>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+            <Button variant="secondary" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button disabled={busy} style={{ background: theme.color.danger, borderColor: theme.color.danger }} onClick={() => void onDelete()}>{busy ? 'Deleting…' : 'Delete visit'}</Button>
+          </div>
+        </Modal>
+      )}
     </>
   )
 }

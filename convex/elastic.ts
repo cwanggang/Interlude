@@ -422,6 +422,21 @@ async function writeBrief(
 }
 
 /** Creates or updates this deployment's Agent Builder tools, agent, and pre-visit-brief Workflow. */
+/** Removes a deleted visit's passages, so the explainer agent and Ask the record stop finding them. */
+export const deleteVisitChunks = internalAction({
+  args: { appointmentId: v.id("appointments") },
+  returns: v.null(),
+  handler: async (_ctx, args) => {
+    await ensureOnce();
+    await es().deleteByQuery({
+      index: indexName("visit_chunks"),
+      query: { term: { appointment_id: args.appointmentId } },
+      refresh: true,
+    });
+    return null;
+  },
+});
+
 export const syncAgent = internalAction({
   args: {},
   returns: v.object({ agentId: v.string(), tools: v.array(v.string()) }),
