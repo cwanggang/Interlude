@@ -242,6 +242,42 @@ export const release = mutation({
   },
 });
 
+/**
+ * Doctor web "Delete visit" (testing and re-recording): removes the visit with its audio,
+ * transcript, summary and tasks, and its passages in Elastic. The appointment's questions go
+ * back to open and the appointment back to upcoming, so the visit can be recorded again.
+ * Consent records stay (append-only).
+ */
+export const remove = mutation({
+  args: { visitId: v.id("visits") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const visit = await ctx.db.get("visits", args.visitId);
+    if (!visit) return null;
+    if (visit.audioStorageId) await ctx.storage.delete(visit.audioStorageId);
+    const tasks = await ctx.db
+      .query("visitTasks")
+      .withIndex("by_visit", (q) => q.eq("visitId", args.visitId))
+      .collect();
+    for (const t of tasks) await ctx.db.delete("visitTasks", t._id);
+    const questions = await ctx.db
+      .query("questions")
+      .withIndex("by_appointment", (q) => q.eq("appointmentId", visit.appointmentId))
+      .collect();
+    for (const q of questions) {
+      if (q.status === "answered") {
+        await ctx.db.patch("questions", q._id, { status: "open", answerEvidence: undefined });
+      }
+    }
+    await ctx.db.patch("appointments", visit.appointmentId, { status: "upcoming" });
+    await ctx.db.delete("visits", args.visitId);
+    await ctx.scheduler.runAfter(0, internal.elastic.deleteVisitChunks, {
+      appointmentId: visit.appointmentId,
+    });
+    return null;
+  },
+});
+
 const visitListRow = v.object({
   _id: v.id("visits"),
   appointmentId: v.id("appointments"),
@@ -650,6 +686,8 @@ export const setStatus = internalMutation({
   args: { visitId: v.id("visits"), status: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
+    // The doctor may have deleted the visit while it was processing.
+    if (!(await ctx.db.get("visits", args.visitId))) return null;
     await ctx.db.patch("visits", args.visitId, { status: args.status });
     return null;
   },
