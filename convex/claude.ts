@@ -336,8 +336,10 @@ export async function transcribeLiveTurn(args: {
   selected: LiveSpeaker;
   recent?: { speaker: LiveSpeaker; text: string }[];
 }): Promise<{ speaker: LiveSpeaker; language: Language; text: string; detected: boolean }> {
-  const { audio, languages, selected } = args;
+  const { languages, selected } = args;
   const codes = [...new Set([languages.doctor, languages.patient])];
+  // A stored Blob is a stream that can be read once; each language pass reads it, so load it first.
+  const audio = new Blob([await args.audio.arrayBuffer()], { type: args.audio.type });
   const passes = await Promise.all(codes.map((l) => transcribeFile(audio, l)));
   const texts = Object.fromEntries(codes.map((l, i) => [l, passes[i].text.trim()])) as Partial<
     Record<Language, string>
