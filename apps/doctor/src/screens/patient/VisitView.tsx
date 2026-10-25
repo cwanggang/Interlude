@@ -255,7 +255,7 @@ function Transcript({ visit, highlight }: { visit: Visit; highlight: number | nu
               <span style={{ width: 96, flexShrink: 0 }}><Chip tone={tone(turn.speaker)} size={12}>{turn.speaker[0].toUpperCase() + turn.speaker.slice(1)}</Chip></span>
               <span style={{ flex: 1, display: 'grid', gap: 2 }}>
                 <Text style={{ font: `400 15px/1.45 ${theme.font.body}` }}>{main}</Text>
-                {turn.speaker === 'patient' && second !== main && <Text variant="muted">{second}</Text>}
+                {patientSide && second !== main && <Text variant="muted">{second}</Text>}
               </span>
             </div>
           )

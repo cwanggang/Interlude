@@ -267,6 +267,17 @@ function fold(text: string): string {
 export function AskRecord({ patientId }: { patientId: Id<'patients'> }) {
   const ask = useAction(api.elastic.askRecord)
   const search = useAction(api.elastic.searchCheckins)
+  const entries = useQuery(api.patients.symptomEntries, { patientId })
+  // The agent cites quotes in the patient's language only; find each one's English from the record.
+  const englishFor = (quote: string): string | null => {
+    const q = fold(quote).replace(/[^a-z0-9 ]/g, '').trim()
+    if (!q) return null
+    const hit = entries?.find((e) => {
+      const original = fold(e.quoteOriginal).replace(/[^a-z0-9 ]/g, '').trim()
+      return original === q || original.includes(q) || q.includes(original)
+    })
+    return hit && hit.quoteEnglish !== hit.quoteOriginal ? hit.quoteEnglish : null
+  }
   const [question, setQuestion] = useState('')
   const [asked, setAsked] = useState('')
   const [answer, setAnswer] = useState<FunctionReturnType<typeof api.elastic.askRecord> | null>(null)
@@ -317,6 +328,7 @@ export function AskRecord({ patientId }: { patientId: Id<'patients'> }) {
               {answer.citations.map((c, i) => (
                 <div key={i} style={{ background: theme.color.bg, borderRadius: 14, padding: '12px 16px', display: 'grid', gap: 4 }}>
                   <Text variant="quote">{`“${c.quote}”`}</Text>
+                  {englishFor(c.quote) && <Text variant="muted">{englishFor(c.quote)}</Text>}
                   {c.date && <Text color={theme.color.placeholder} style={{ font: `400 12px/1.45 ${theme.font.body}` }}>{formatDay(c.date)}</Text>}
                 </div>
               ))}
