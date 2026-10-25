@@ -2,7 +2,8 @@
 // created the doctor's alert. No Ask button here.
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { Linking, Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, View } from 'react-native';
+import { Text } from '../BiText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, ScreenTitle } from '../components';

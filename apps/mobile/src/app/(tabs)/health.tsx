@@ -7,7 +7,8 @@ import type { FunctionReturnType } from 'convex/server';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, Text as RNText, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { Text as RNText } from '../../BiText';
 
 import { api } from '../../../../../convex/_generated/api';
 import type { Id } from '../../../../../convex/_generated/dataModel';
@@ -15,6 +16,7 @@ import { AskButton, Card, Divider, Icon, IconCircle, Link, Screen, ScreenTitle, 
 import { formatShortDay, type Language, type Strings } from '../../i18n';
 import { theme } from '../../theme';
 import { useNow } from '../../useNow';
+import { bi } from '../../showEnglish';
 import { usePatient } from '../../usePatient';
 import { summaryFor, todaysDoses } from '../../visitSummary';
 
@@ -86,7 +88,7 @@ function HealthBody({ patientId, from, today, visitDay, showPast, onTogglePast, 
   const entries = useQuery(api.patients.symptomEntries, { patientId });
   if (overview === undefined || entries === undefined) return <Text>{s.loading}</Text>;
 
-  const name = (sym: Symptom) => (language === 'en' ? capitalize(sym.symptom) : capitalize(sym.symptomOriginal));
+  const name = (sym: Symptom) => (language === 'en' ? capitalize(sym.symptom) : bi(capitalize(sym.symptomOriginal), capitalize(sym.symptom), language));
   // Current: mentioned in the last week. Older ones wait behind "Show past symptoms".
   const recent = addDays(today, -(WEEK_DAYS - 1));
   const current = overview.symptoms.filter((sym) => sym.lastDate >= recent);
@@ -246,7 +248,7 @@ function SymptomCard({ symptom, name, checkins, today, language, s }: { symptom:
       {quote && (
         <View style={{ backgroundColor: theme.color.periwinkleBg, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 14, gap: 4 }}>
           <RNText style={{ fontFamily: theme.font.bodyMedium, fontSize: 17, lineHeight: 17 * 1.4, color: theme.color.text }}>
-            {`“${language === 'en' ? quote.quoteEnglish : quote.quoteOriginal}”`}
+            {language === 'en' ? `“${quote.quoteEnglish}”` : bi(`“${quote.quoteOriginal}”`, `“${quote.quoteEnglish}”`, language)}
           </RNText>
           <RNText style={{ fontFamily: theme.font.body, fontSize: theme.font.size.xs, color: theme.color.textMuted }}>{s.callOn(formatShortDay(quote.date, language))}</RNText>
         </View>

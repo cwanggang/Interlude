@@ -7,14 +7,19 @@ import { View } from 'react-native';
 import { api } from '../../../convex/_generated/api';
 import type { Id } from '../../../convex/_generated/dataModel';
 import { Card, CheckRow, Divider, Icon, IconCircle, SectionTitle, StatusChip, Text } from './components';
-import type { Language, Strings } from './i18n';
+import { withEnglish, type Language, type Strings } from './i18n';
+import { useShowEnglish } from './showEnglish';
 import { theme } from './theme';
-import { itemText, summaryFor } from './visitSummary';
+import { itemText, summaryFor, type VisitSummary } from './visitSummary';
 
 type Visit = NonNullable<FunctionReturnType<typeof api.visits.getByAppointment>>;
 
 export function VisitSummaryView({ visit, language, s }: { visit: Visit; language: Language; s: Strings }) {
   const summary = summaryFor(visit, language);
+  // "Show English" (demo): the English summary has the same shape, so pair items by position.
+  const showEnglish = useShowEnglish() && language === 'es';
+  const en = showEnglish ? (visit.summaryEnglish as VisitSummary | undefined) : undefined;
+  const bi = (main: string, english: string | undefined) => withEnglish(main, english, showEnglish);
   if (!summary) return null;
   const tests = summary.tests_ordered ?? [];
   return (
@@ -31,8 +36,8 @@ export function VisitSummaryView({ visit, language, s }: { visit: Visit; languag
               <StatusChip label={s.changeLabels[m.change] ?? m.change} color={theme.color.danger} bg={theme.color.coralBg} />
             )}
           </View>
-          <LabeledLine label={s.whenLabel} value={m.schedule} />
-          {m.purpose ? <LabeledLine label={s.whatForLabel} value={m.purpose} /> : null}
+          <LabeledLine label={s.whenLabel} value={bi(m.schedule, en?.medications?.[i]?.schedule)} />
+          {m.purpose ? <LabeledLine label={s.whatForLabel} value={bi(m.purpose, en?.medications?.[i]?.purpose)} /> : null}
         </Card>
       ))}
 
@@ -41,7 +46,7 @@ export function VisitSummaryView({ visit, language, s }: { visit: Visit; languag
           <SectionTitle title={s.instructionsTitle} />
           <Card gap={10}>
             {(summary.instructions ?? []).map((item, i) => (
-              <Text key={i}>{`•  ${itemText(item)}`}</Text>
+              <Text key={i}>{`•  ${bi(itemText(item), en?.instructions?.[i] !== undefined ? itemText(en.instructions[i]) : undefined)}`}</Text>
             ))}
           </Card>
         </>
@@ -55,7 +60,7 @@ export function VisitSummaryView({ visit, language, s }: { visit: Visit; languag
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Icon name="cal-teal" size={20} />
                 <View style={{ flex: 1 }}>
-                  <Text>{summary.follow_up}</Text>
+                  <Text>{bi(summary.follow_up, en?.follow_up)}</Text>
                 </View>
               </View>
             ) : null}
@@ -65,7 +70,7 @@ export function VisitSummaryView({ visit, language, s }: { visit: Visit; languag
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Icon name="file" size={20} />
                   <View style={{ flex: 1 }}>
-                    <Text>{itemText(t)}</Text>
+                    <Text>{bi(itemText(t), en?.tests_ordered?.[i] !== undefined ? itemText(en.tests_ordered[i]) : undefined)}</Text>
                   </View>
                 </View>
               </View>
@@ -81,7 +86,7 @@ export function VisitSummaryView({ visit, language, s }: { visit: Visit; languag
             <Text variant="heading" color={theme.color.danger}>{s.warningSignsTitle}</Text>
           </View>
           {(summary.warning_signs ?? []).map((w, i) => (
-            <Text key={i}>{`•  ${w}`}</Text>
+            <Text key={i}>{`•  ${bi(w, en?.warning_signs?.[i])}`}</Text>
           ))}
         </View>
       )}
@@ -105,6 +110,7 @@ function LabeledLine({ label, value }: { label: string; value: string }) {
 
 /** G10 / D4: each question from the queue, answered or carried over to the next visit. */
 function QuestionOutcomes({ appointmentId, language, s }: { appointmentId: Id<'appointments'>; language: Language; s: Strings }) {
+  const showEnglish = useShowEnglish() && language === 'es';
   const questions = useQuery(api.questions.listForAppointment, { appointmentId });
   if (!questions?.length) return null;
   return (
@@ -115,7 +121,7 @@ function QuestionOutcomes({ appointmentId, language, s }: { appointmentId: Id<'a
           <View key={q._id}>
             {i > 0 && <Divider />}
             <View style={{ gap: theme.space.sm, paddingVertical: 14 }}>
-              <Text>{language === 'en' ? q.textEnglish : q.textOriginal}</Text>
+              <Text>{language === 'en' ? q.textEnglish : withEnglish(q.textOriginal, q.textEnglish, showEnglish)}</Text>
               {q.status === 'answered' ? (
                 <StatusChip label={s.answered} icon="check-green" color={theme.color.success} bg={theme.color.successBg} />
               ) : (
@@ -131,6 +137,7 @@ function QuestionOutcomes({ appointmentId, language, s }: { appointmentId: Id<'a
 
 /** G11: pick up the prescription, book the follow-up, get the tests. Ticks are saved. */
 function Checklist({ visitId, language, s }: { visitId: Id<'visits'>; language: Language; s: Strings }) {
+  const showEnglish = useShowEnglish() && language === 'es';
   const tasks = useQuery(api.tasks.listForVisit, { visitId });
   const setDone = useMutation(api.tasks.setDone);
   if (!tasks?.length) return null;
@@ -142,7 +149,7 @@ function Checklist({ visitId, language, s }: { visitId: Id<'visits'>; language: 
           <View key={task._id}>
             {i > 0 && <Divider />}
             <CheckRow
-              label={language === 'en' ? task.textEnglish : task.textPatientLang}
+              label={language === 'en' ? task.textEnglish : withEnglish(task.textPatientLang, task.textEnglish, showEnglish)}
               checked={task.done}
               onToggle={() => void setDone({ taskId: task._id, done: !task.done })}
             />

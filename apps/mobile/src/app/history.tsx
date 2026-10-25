@@ -4,6 +4,7 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../../convex/_generated/api';
 import { Badge, Card, ListItem, PageHeader, Screen, ScreenTitle, Text } from '../components';
 import { formatDay } from '../i18n';
+import { bi } from '../showEnglish';
 import { usePatient } from '../usePatient';
 
 export default function History() {
@@ -13,7 +14,7 @@ export default function History() {
 
   // G18: each call's one-line summary in the patient's language (English only on older rows).
   const summaries = new Map(
-    (conversations ?? []).map((c) => [c._id, language === 'en' ? c.summaryEnglish : (c.summaryPatientLang ?? c.summaryEnglish)]),
+    (conversations ?? []).map((c) => [c._id, language === 'en' ? c.summaryEnglish : c.summaryPatientLang ? bi(c.summaryPatientLang, c.summaryEnglish, language) : c.summaryEnglish]),
   );
 
   const days = new Map<string, NonNullable<typeof entries>>();
@@ -32,10 +33,10 @@ export default function History() {
           {list.map((e) => (
             <ListItem
               key={e._id}
-              title={language === 'es' ? e.symptomOriginal : e.symptom}
+              title={language === 'es' ? bi(e.symptomOriginal, e.symptom, language) : e.symptom}
               subtitle={
                 <>
-                  <Text variant="quote">“{language === 'es' ? e.quoteOriginal : e.quoteEnglish}”</Text>
+                  <Text variant="quote">{language === 'es' ? bi(`“${e.quoteOriginal}”`, `“${e.quoteEnglish}”`, language) : `“${e.quoteEnglish}”`}</Text>
                   {e.change && <Text variant="muted">{s.change[e.change] ?? e.change}</Text>}
                 </>
               }

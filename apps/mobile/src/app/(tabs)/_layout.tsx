@@ -2,7 +2,8 @@
 // screen is kept as a route (opened from My Visit) but has no tab in the design.
 import { Tabs } from 'expo-router';
 import type { ComponentProps } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { Text } from '../../BiText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '../../components';

@@ -6,13 +6,14 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text as RNText, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, TextInput, View } from 'react-native';
+import { Text as RNText } from '../BiText';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { api } from '../../../../convex/_generated/api';
 import { Button, Icon, IconCircle, ScreenTitle, Text, Toggle } from '../components';
 import { icons } from '../icons';
-import { formatTime, t, type Language, type Strings } from '../i18n';
+import { formatTime, plain, t, type Language, type Strings } from '../i18n';
 import { theme } from '../theme';
 
 type Step = 'welcome' | 'login' | 'language' | 'profile' | 'time' | 'consent' | 'done';
@@ -289,7 +290,7 @@ function Field({ label, value, onChangeText, placeholder, multiline, keyboardTyp
       <TextInput
         value={value}
         onChangeText={onChangeText}
-        placeholder={placeholder}
+        placeholder={placeholder && plain(placeholder)}
         placeholderTextColor={theme.color.textMuted}
         multiline={multiline}
         keyboardType={keyboardType}

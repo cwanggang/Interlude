@@ -14,6 +14,7 @@ import type { IconName } from '../../icons';
 import { formatDate, formatTime, type Language, type Strings } from '../../i18n';
 import { theme } from '../../theme';
 import { useNow } from '../../useNow';
+import { bi } from '../../showEnglish';
 import { usePatient } from '../../usePatient';
 import { itemText, summaryFor, todaysDoses, type SummaryItem, type VisitSummary } from '../../visitSummary';
 
@@ -74,7 +75,7 @@ export default function Home() {
       {released === undefined ? null : summary ? (
         <>
           <Medicines summary={summary} patientId={patient._id} timezone={patient.timezone} now={now} s={s} />
-          <Instructions items={summary.instructions ?? []} s={s} />
+          <Instructions items={summary.instructions ?? []} english={(released?.summaryEnglish as VisitSummary | undefined)?.instructions} language={language} s={s} />
         </>
       ) : (
         <Card>
@@ -151,7 +152,7 @@ function Tile({ cycle, schedule, patientId, timezone, now, call, language, s }: 
   }
   const last = schedule.lastCheckin;
   if (schedule.state === 'done' && last && now - last.startedAt < DONE_SHOWN_MS) {
-    const line = language === 'en' ? last.summaryEnglish : (last.summaryPatientLang ?? last.summaryEnglish);
+    const line = language === 'en' ? last.summaryEnglish : last.summaryPatientLang ? bi(last.summaryPatientLang, last.summaryEnglish, language) : last.summaryEnglish;
     return (
       <Card gap={10}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.md }}>
@@ -281,7 +282,7 @@ function Medicines({ summary, patientId, timezone, now, s }: { summary: VisitSum
 }
 
 /** 2.2: the top instructions, numbered, with "See all". */
-function Instructions({ items, s }: { items: SummaryItem[]; s: Strings }) {
+function Instructions({ items, english, language, s }: { items: SummaryItem[]; english?: SummaryItem[]; language: Language; s: Strings }) {
   if (items.length === 0) return null;
   return (
     <>
@@ -295,7 +296,7 @@ function Instructions({ items, s }: { items: SummaryItem[]; s: Strings }) {
                 <Text variant="strong" color={theme.color.primary}>{String(i + 1)}</Text>
               </View>
               <View style={{ flex: 1 }}>
-                <Text>{itemText(item)}</Text>
+                <Text>{bi(itemText(item), english?.[i] !== undefined ? itemText(english[i]) : undefined, language)}</Text>
               </View>
             </View>
           </View>
