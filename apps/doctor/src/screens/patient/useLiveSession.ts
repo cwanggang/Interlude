@@ -6,6 +6,7 @@
 import { useAction, useMutation } from 'convex/react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../../../../convex/_generated/api'
+import type { Id } from '../../../../../convex/_generated/dataModel'
 
 export type Speaker = 'doctor' | 'patient'
 export type Language = 'en' | 'es'
@@ -21,7 +22,7 @@ const BARS = 30
 
 type Segment = { recorder: MediaRecorder; speaker: Speaker; startedAt: number; heardMs: number; quietMs: number; send: boolean }
 
-export function useLiveSession(opts: { recordConsent: Record<Speaker, boolean>; translate: boolean; languages: Record<Speaker, Language> }) {
+export function useLiveSession(opts: { appointmentId: Id<'appointments'>; recordConsent: Record<Speaker, boolean>; translate: boolean; languages: Record<Speaker, Language> }) {
   const generateUploadUrl = useMutation(api.interpreter.generateUploadUrl)
   const translateTurn = useAction(api.interpreter.translateTurn)
 
@@ -48,6 +49,7 @@ export function useLiveSession(opts: { recordConsent: Record<Speaker, boolean>; 
     tts: false, // reading a translation aloud: not part of the visit
     elapsed: 0,
     nextId: 1,
+    recent: [] as string[], // last few turns, so the interpreter can fix mishearings from context
     timer: 0,
     closed: false,
   })
@@ -67,7 +69,8 @@ export function useLiveSession(opts: { recordConsent: Record<Speaker, boolean>; 
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob })
         if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
         const { storageId } = (await res.json()) as { storageId: string }
-        const out = await translateTurn({ storageId: storageId as never, from, to })
+        const out = await translateTurn({ storageId: storageId as Id<'_storage'>, from, to, appointmentId: r.current.opts.appointmentId, recent: r.current.recent.slice(-4) })
+        if (out.original) r.current.recent = [...r.current.recent, `${who}: ${out.original}`].slice(-8)
         setTurns((all) => (out.original ? all.map((t) => (t.id === id ? { ...t, ...out, status: 'done' } : t)) : all.filter((t) => t.id !== id)))
       } catch (e) {
         console.error('[live visit] turn failed', e)

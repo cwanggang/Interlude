@@ -49,7 +49,7 @@ export default function StartVisitFlow({ appointmentId, scheduledAt, people, onC
   const [consent, setConsent] = useState<Consent | null>(null)
   const upload = useUploadVisit(appointmentId)
   if (!consent) return <ConsentDialog scheduledAt={scheduledAt} people={people} upload={upload} onClose={onClose} onUploaded={onUploaded} onStart={setConsent} />
-  return <LiveVisit people={people} consent={consent} upload={upload} onClose={onClose} onUploaded={onUploaded} />
+  return <LiveVisit appointmentId={appointmentId} people={people} consent={consent} upload={upload} onClose={onClose} onUploaded={onUploaded} />
 }
 
 // ---- 6.5a: consent ----
@@ -182,10 +182,10 @@ function ConsentBox({ checked, onChange, children }: { checked: boolean; onChang
 
 // ---- 6.5b/c: live visit; 6.5d: patient view; 6.5e: finish ----
 
-function LiveVisit({ people, consent, upload, onClose, onUploaded }: { people: People; consent: Consent; upload: (file: Blob) => Promise<void>; onClose: () => void; onUploaded: () => void }) {
+function LiveVisit({ appointmentId, people, consent, upload, onClose, onUploaded }: { appointmentId: Id<'appointments'>; people: People; consent: Consent; upload: (file: Blob) => Promise<void>; onClose: () => void; onUploaded: () => void }) {
   const { doctorName, patientName, patientLanguage } = people
   const languages = { doctor: 'en', patient: patientLanguage } as const
-  const live = useLiveSession({ recordConsent: consent.record, translate: consent.translate, languages })
+  const live = useLiveSession({ appointmentId, recordConsent: consent.record, translate: consent.translate, languages })
   const [patientView, setPatientView] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const [autoRead, setAutoRead] = useState(patientLanguage !== 'en')
