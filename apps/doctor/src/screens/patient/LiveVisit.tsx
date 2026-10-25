@@ -439,6 +439,9 @@ const PATIENT_TEXT = {
 /** 6.5d: large text to turn toward the patient, in their language. */
 function PatientScreen({ people, turn, elapsed, status, recording, speaker, levels, speaking, onSpeak, onListen, onExit }: { people: People; turn: Turn | null; elapsed: number; status: string; recording: boolean; speaker: Speaker; levels: number[]; speaking: boolean; onSpeak: () => void; onListen: () => void; onExit: () => void }) {
   const t = PATIENT_TEXT[people.patientLanguage]
+  // Small English under each Spanish label, so the doctor (and anyone watching) can follow.
+  const en = people.patientLanguage === 'en' ? null : PATIENT_TEXT.en
+  const small: CSSProperties = { font: `500 13px/1.3 ${theme.font.body}`, color: theme.color.textMuted }
   const patientTalking = speaker === 'patient'
   return (
     <Overlay width={1392} height="calc(100vh - 56px)" padding="28px 56px" gap={28}>
@@ -449,10 +452,12 @@ function PatientScreen({ people, turn, elapsed, status, recording, speaker, leve
         <span style={{ display: 'flex', alignItems: 'center', gap: 8, height: 40, padding: '0 14px', borderRadius: theme.radius.pill, background: theme.color.surface, font: `700 14px ${theme.font.body}`, color: recording ? theme.color.dangerText : theme.color.primary, whiteSpace: 'pre' }}>
           {recording && <Icon name="rec-dot-10" size={10} />}
           {`${status === 'paused' ? t.paused : recording ? t.recording : t.live}  ${clock(elapsed)}`}
+          {en && <span style={{ ...small, fontSize: 12 }}>{status === 'paused' ? en.paused : recording ? en.recording : en.live}</span>}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: theme.radius.pill, background: theme.color.surface, font: `600 14px ${theme.font.body}`, color: theme.color.periwinkle }}>
           <Icon name="globe-periwinkle-14b" size={14} />
           {t.view}
+          {en && <span style={{ ...small, fontSize: 12 }}>Patient view</span>}
         </span>
         <div style={{ flex: 1 }} />
         <PillButton icon="shrink-18" onClick={onExit}>Exit patient view</PillButton>
@@ -463,22 +468,32 @@ function PatientScreen({ people, turn, elapsed, status, recording, speaker, leve
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <PersonAvatar name={people.doctorName} size={48} doctor />
               <Text color={theme.color.textMuted} style={{ font: `600 22px/1.45 ${theme.font.body}` }}>{t.says(people.doctorName)}</Text>
+              {en && <span style={small}>{en.says(people.doctorName)}</span>}
             </div>
             <Text style={{ font: `600 64px/1.18 ${theme.font.heading}`, letterSpacing: -0.64 }}>{turn.translated}</Text>
             {turn.translated !== turn.original && <Text color={theme.color.textMuted} style={{ font: `400 22px/1.45 ${theme.font.body}` }}>{turn.original}</Text>}
           </>
         ) : (
-          <Text style={{ font: `600 48px/1.2 ${theme.font.heading}` }} color={theme.color.textMuted}>{t.waiting}</Text>
+          <>
+            <Text style={{ font: `600 48px/1.2 ${theme.font.heading}` }} color={theme.color.textMuted}>{t.waiting}</Text>
+            {en && <Text style={{ ...small, fontSize: 18 }}>{en.waiting}</Text>}
+          </>
         )}
       </div>
       <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-        <CtaButton icon="speaker-white-34" iconSize={34} disabled={!turn} onClick={onListen} style={{ height: 88, padding: '0 36px', borderRadius: 44, fontSize: 28, gap: 14 }}>{t.listen}</CtaButton>
+        <CtaButton icon="speaker-white-34" iconSize={34} disabled={!turn} onClick={onListen} style={{ height: 88, padding: '0 36px', borderRadius: 44, fontSize: 28, gap: 14 }}>
+          <span style={{ display: 'grid', textAlign: 'left' }}>
+            {t.listen}
+            {en && <span style={{ font: `500 14px/1.2 ${theme.font.body}`, color: 'rgba(255,255,255,0.85)' }}>{en.listen}</span>}
+          </span>
+        </CtaButton>
         <div style={{ flex: 1 }} />
         <button onClick={onSpeak} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 22px 14px 14px', borderRadius: theme.radius.pill, border: patientTalking ? `2px solid ${theme.color.periwinkle}` : '2px solid transparent', background: theme.color.surface, cursor: 'pointer', textAlign: 'left' }}>
           <Icon name="mascot-listen-52" size={52} />
           <span style={{ display: 'grid', gap: 2 }}>
             <Text style={{ font: `700 17px/1.45 ${theme.font.body}` }}>{patientTalking && speaking ? t.speaking : t.speak}</Text>
             <Text variant="muted">{t.weTranslate}</Text>
+            {en && <span style={{ ...small, fontSize: 12 }}>{`${patientTalking && speaking ? en.speaking : en.speak} · ${en.weTranslate}`}</span>}
           </span>
           <Waveform levels={levels} color={theme.color.periwinkle} height={30} active={patientTalking} bars={18} />
         </button>

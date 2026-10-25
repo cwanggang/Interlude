@@ -585,8 +585,8 @@ export async function checkQuestionCoverage(
 ): Promise<QuestionCoverage[]> {
   if (questions.length === 0) return [];
   const result = await structured<{ results: QuestionCoverage[] }>({
-    effort: "low",
-    system: `You check which of a patient's prepared questions were answered during their doctor visit. A question counts as answered only if the doctor (or interpreter relaying the doctor) addressed it in the transcript. evidence is the shortest transcript quote, in English, that shows the answer, or null if unanswered. Return one result per question id.`,
+    effort: "medium",
+    system: `You check which of a patient's prepared questions were answered during their doctor visit. A question counts as answered if the doctor (or an interpreter relaying the doctor) said something that tells the patient what they wanted to know, even when it is indirect, uses different words, or is not what the patient expected. Examples: "When do I take my new pill?" is answered by "don't start the new medicine for another week" (not now, in a week); "Can I eat fruit?" is answered by "fruit is fine in small portions". It is not answered when the doctor only mentions the same topic without telling the patient what to do or what is happening (for example, naming the new pill does not answer "Is the new pill lowering my sugar too much?"). evidence is the shortest transcript quote, in English, that shows the answer, or null if unanswered. Return one result per question id.`,
     user: `Questions:\n${questions.map((q) => `${q.id}: ${q.textEnglish}`).join("\n")}\n\nTranscript:\n${transcriptText(transcript)}`,
     schema: {
       type: "object",
