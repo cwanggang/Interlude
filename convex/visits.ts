@@ -7,6 +7,7 @@ import {
   internalQuery,
   mutation,
   query,
+  type ActionCtx,
   type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -310,104 +311,123 @@ export const processVisit = internalAction({
   args: { visitId: v.id("visits"), rawText: v.optional(v.string()) },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const context = await ctx.runQuery(internal.visits.getProcessingContext, {
-      visitId: args.visitId,
-    });
-    if (!context) return null;
-    const { patientId, appointmentId, language } = context;
-    const log = (msg: string) => console.log(`[visits] ${args.visitId}: ${msg}`);
-    const fail = async (stage: string, error: unknown) => {
-      console.error(`[visits] ${args.visitId}: ${stage} failed:`, error);
+    // Any error the stages below don't catch marks the visit failed, so the doctor never waits
+    // on "Processing…" for a run that already died.
+    try {
+      return await runProcessVisit(ctx, args);
+    } catch (error) {
+      console.error(`[visits] ${args.visitId}: processing crashed:`, error);
       await ctx.runMutation(internal.visits.setStatus, { visitId: args.visitId, status: "failed" });
-    };
-
-    // D2: speech to text, one pass per language spoken in the room.
-    let passes: Record<string, string>;
-    if (args.rawText !== undefined) {
-      passes = { [language]: args.rawText };
-    } else {
-      const audio = context.audioStorageId ? await ctx.storage.get(context.audioStorageId) : null;
-      if (!audio) return await fail("loading audio", "no audio file");
-      const languages: Language[] = language === "en" ? ["en"] : ["en", language as Language];
-      const started = Date.now();
-      try {
-        const results = await Promise.all(languages.map((l) => transcribeFile(audio, l)));
-        passes = Object.fromEntries(languages.map((l, i) => [l, results[i].text]));
-      } catch (error) {
-        return await fail("transcription", error);
-      }
-      log(`transcribed ${languages.join("+")} in ${Date.now() - started} ms`);
+      return null;
     }
-
-    let transcript: VisitTurn[];
-    try {
-      transcript = await cleanVisitTranscript(passes, language, context.liveTranscript);
-    } catch (error) {
-      return await fail("transcript cleanup", error);
-    }
-    // Only one person agreed to be recorded: the app mutes the other by the speaker card, which
-    // the doctor may forget to switch. Drop every turn not from a consenting speaker (labelled
-    // from content), and delete the audio so their voice is not kept.
-    const kept = keptSpeakers(context.consent);
-    if (kept) {
-      const before = transcript.length;
-      transcript = transcript.filter((t) => kept.has(t.speaker));
-      log(`consent: kept ${[...kept].join("+")} turns, dropped ${before - transcript.length}`);
-    }
-    await ctx.runMutation(internal.visits.saveTranscript, {
-      visitId: args.visitId,
-      transcript,
-      deleteAudio: kept !== null,
-    });
-    log(`cleaned transcript: ${transcript.length} turns`);
-
-    // Index passages for the explainer agent before anything else, so it works as early as possible.
-    const chunks = toChunks(transcript);
-    try {
-      await ctx.runAction(internal.elastic.indexVisitChunks, { patientId, appointmentId, chunks });
-      log(`indexed ${chunks.length} passages in Elastic`);
-    } catch (error) {
-      // The summary is still useful without search; the explainer will just find nothing.
-      console.error(`[visits] ${args.visitId}: indexVisitChunks failed:`, error);
-    }
-
-    // D3 summaries + tasks, D4 coverage and D5 unaddressed symptoms run in parallel.
-    let summary, coverage, notDiscussed;
-    try {
-      [summary, coverage, notDiscussed] = await Promise.all([
-        summarizeVisit(transcript, language, context.priorMedications),
-        checkQuestionCoverage(
-          context.questions.map((q) => ({ id: q._id, textEnglish: q.textEnglish })),
-          transcript,
-        ),
-        findUnaddressedSymptoms(context.reportedSymptoms, transcript),
-      ]);
-    } catch (error) {
-      return await fail("summary", error);
-    }
-    const unaddressed = context.reportedSymptoms.filter((s) => notDiscussed.includes(s.symptom));
-    await ctx.runMutation(internal.visits.saveSummary, {
-      visitId: args.visitId,
-      summaryEnglish: summary.english,
-      summaryPatientLang: summary.patientLang,
-      tasks: summary.tasks,
-      unaddressedSymptoms: unaddressed,
-      coverage: coverage
-        .filter((c) => context.questions.some((q) => q._id === c.id))
-        .map((c) => ({
-          questionId: c.id as Id<"questions">,
-          answered: c.answered,
-          evidence: c.evidence ?? undefined,
-        })),
-    });
-    log(
-      `summarized: ${summary.english.medications.length} medications, ${summary.tasks.length} tasks, ` +
-        `${coverage.filter((c) => c.answered).length}/${coverage.length} questions answered, ` +
-        `not discussed: ${unaddressed.map((s) => s.symptom).join(", ") || "none"}`,
-    );
-    return null;
   },
 });
+
+async function runProcessVisit(
+  ctx: ActionCtx,
+  args: { visitId: Id<"visits">; rawText?: string },
+): Promise<null> {
+  const context = await ctx.runQuery(internal.visits.getProcessingContext, {
+    visitId: args.visitId,
+  });
+  if (!context) return null;
+  const { patientId, appointmentId, language } = context;
+  const log = (msg: string) => console.log(`[visits] ${args.visitId}: ${msg}`);
+  const fail = async (stage: string, error: unknown): Promise<null> => {
+    console.error(`[visits] ${args.visitId}: ${stage} failed:`, error);
+    await ctx.runMutation(internal.visits.setStatus, { visitId: args.visitId, status: "failed" });
+    return null;
+  };
+
+  // D2: speech to text, one pass per language spoken in the room.
+  let passes: Record<string, string>;
+  if (args.rawText !== undefined) {
+    passes = { [language]: args.rawText };
+  } else {
+    const stored = context.audioStorageId ? await ctx.storage.get(context.audioStorageId) : null;
+    if (!stored) return await fail("loading audio", "no audio file");
+    const languages: Language[] = language === "en" ? ["en"] : ["en", language as Language];
+    const started = Date.now();
+    try {
+      // A stored Blob is a stream that can be read once; the two language passes each read it,
+      // so load it into memory first.
+      const audio = new Blob([await stored.arrayBuffer()], { type: stored.type });
+      const results = await Promise.all(languages.map((l) => transcribeFile(audio, l)));
+      passes = Object.fromEntries(languages.map((l, i) => [l, results[i].text]));
+    } catch (error) {
+      return await fail("transcription", error);
+    }
+    log(`transcribed ${languages.join("+")} in ${Date.now() - started} ms`);
+  }
+
+  let transcript: VisitTurn[];
+  try {
+    transcript = await cleanVisitTranscript(passes, language, context.liveTranscript);
+  } catch (error) {
+    return await fail("transcript cleanup", error);
+  }
+  // Only one person agreed to be recorded: the app mutes the other by the speaker card, which
+  // the doctor may forget to switch. Drop every turn not from a consenting speaker (labelled
+  // from content), and delete the audio so their voice is not kept.
+  const kept = keptSpeakers(context.consent);
+  if (kept) {
+    const before = transcript.length;
+    transcript = transcript.filter((t) => kept.has(t.speaker));
+    log(`consent: kept ${[...kept].join("+")} turns, dropped ${before - transcript.length}`);
+  }
+  await ctx.runMutation(internal.visits.saveTranscript, {
+    visitId: args.visitId,
+    transcript,
+    deleteAudio: kept !== null,
+  });
+  log(`cleaned transcript: ${transcript.length} turns`);
+
+  // Index passages for the explainer agent before anything else, so it works as early as possible.
+  const chunks = toChunks(transcript);
+  try {
+    await ctx.runAction(internal.elastic.indexVisitChunks, { patientId, appointmentId, chunks });
+    log(`indexed ${chunks.length} passages in Elastic`);
+  } catch (error) {
+    // The summary is still useful without search; the explainer will just find nothing.
+    console.error(`[visits] ${args.visitId}: indexVisitChunks failed:`, error);
+  }
+
+  // D3 summaries + tasks, D4 coverage and D5 unaddressed symptoms run in parallel.
+  let summary, coverage, notDiscussed;
+  try {
+    [summary, coverage, notDiscussed] = await Promise.all([
+      summarizeVisit(transcript, language, context.priorMedications),
+      checkQuestionCoverage(
+        context.questions.map((q) => ({ id: q._id, textEnglish: q.textEnglish })),
+        transcript,
+      ),
+      findUnaddressedSymptoms(context.reportedSymptoms, transcript),
+    ]);
+  } catch (error) {
+    return await fail("summary", error);
+  }
+  const unaddressed = context.reportedSymptoms.filter((s) => notDiscussed.includes(s.symptom));
+  await ctx.runMutation(internal.visits.saveSummary, {
+    visitId: args.visitId,
+    summaryEnglish: summary.english,
+    summaryPatientLang: summary.patientLang,
+    tasks: summary.tasks,
+    unaddressedSymptoms: unaddressed,
+    coverage: coverage
+      .filter((c) => context.questions.some((q) => q._id === c.id))
+      .map((c) => ({
+        questionId: c.id as Id<"questions">,
+        answered: c.answered,
+        evidence: c.evidence ?? undefined,
+      })),
+  });
+  log(
+    `summarized: ${summary.english.medications.length} medications, ${summary.tasks.length} tasks, ` +
+      `${coverage.filter((c) => c.answered).length}/${coverage.length} questions answered, ` +
+      `not discussed: ${unaddressed.map((s) => s.symptom).join(", ") || "none"}`,
+  );
+  return null;
+}
 
 export const getProcessingContext = internalQuery({
   args: { visitId: v.id("visits") },
